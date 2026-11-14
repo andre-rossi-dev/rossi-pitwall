@@ -1,34 +1,50 @@
 import { useEffect, useState } from 'react'
 import type { TelemetrySnapshot } from '../../shared/telemetry'
+import type { RealTelemetrySnapshot } from '../../shared/realTelemetry'
 import { UdpDiagnostics } from './UdpDiagnostics'
 
 export function App() {
   const [telemetry, setTelemetry] = useState<TelemetrySnapshot | null>(null)
+  const [real, setReal] = useState<RealTelemetrySnapshot | null>(null)
+  const [mode, setMode] = useState<'udp' | 'simulated'>('udp')
 
   useEffect(() => {
     // React executa o retorno ao desmontar, inclusive no ciclo extra do StrictMode.
     return window.pitwall.onTelemetry(setTelemetry)
   }, [])
+  useEffect(() => window.pitwall.onRealTelemetry(setReal), [])
 
-  const sample = telemetry?.sample
-  const running = telemetry?.status === 'running'
-  const status = telemetry === null ? 'Aguardando dados' : running ? 'Fonte ativa' : 'Fonte parada'
+  const simulated = mode === 'simulated'
+  const speed = simulated ? telemetry?.sample?.speedKph : real?.motion?.speedKph
+  const gear = simulated ? telemetry?.sample?.gear : real?.motion?.gear
+  const lap = simulated ? telemetry?.sample?.lap : real?.lap?.number
+  const running = simulated ? telemetry?.status === 'running' : real?.status === 'receiving'
+  const status = simulated
+    ? telemetry === null ? 'Aguardando dados' : running ? 'Fonte ativa' : 'Fonte parada'
+    : real?.status === 'stale' ? 'Dados desatualizados'
+      : running ? real?.motion && real.lap ? 'Recebendo dados' : 'Recebendo dados · parcial'
+        : 'Aguardando dados'
 
   return (
     <main className="pitwall">
       <header className="header">
         <div>
-          <p className="eyebrow">ENGENHEIRO DE CORRIDA · V0.2A</p>
+          <p className="eyebrow">ENGENHEIRO DE CORRIDA · V0.2B</p>
           <h1>ROSSI <span>PITWALL</span></h1>
         </div>
-        <span className="simulation-badge">SIMULAÇÃO</span>
+        <span className="simulation-badge">{simulated ? 'SIMULAÇÃO' : 'UDP REAL'}</span>
       </header>
+
+      <div className="mode-selector" role="group" aria-label="Modalidade de telemetria">
+        <button type="button" data-testid="mode-udp" aria-pressed={!simulated} onClick={() => setMode('udp')}>UDP REAL</button>
+        <button type="button" data-testid="mode-simulated" aria-pressed={simulated} onClick={() => setMode('simulated')}>SIMULAÇÃO</button>
+      </div>
 
       <section className="telemetry-panel" aria-labelledby="telemetry-title">
         <div className="panel-heading">
           <div>
             <p className="eyebrow">TELEMETRIA LOCAL</p>
-            <h2 id="telemetry-title">Na pista, em modo simulado.</h2>
+            <h2 id="telemetry-title">{simulated ? 'Na pista, em modo simulado.' : 'Telemetria recebida via UDP.'}</h2>
           </div>
           <p className={`source-status ${running ? 'is-running' : ''}`} role="status">
             <span className="status-dot" aria-hidden="true" />
@@ -39,21 +55,21 @@ export function App() {
         <dl className="metrics">
           <div className="metric speed">
             <dt>VELOCIDADE</dt>
-            <dd><span data-testid="speed">{sample?.speedKph ?? '—'}</span><small>km/h</small></dd>
+            <dd><span data-testid="speed">{speed ?? '—'}</span><small>km/h</small></dd>
           </div>
           <div className="metric">
             <dt>MARCHA</dt>
-            <dd data-testid="gear">{sample?.gear ?? '—'}</dd>
+            <dd data-testid="gear">{gear === -1 ? 'R' : gear === 0 ? 'N' : gear ?? '—'}</dd>
           </div>
           <div className="metric">
             <dt>VOLTA</dt>
-            <dd data-testid="lap">{sample?.lap ?? '—'}</dd>
+            <dd data-testid="lap">{lap ?? '—'}</dd>
           </div>
         </dl>
 
         <div className="panel-footer">
-          <span>Fonte: {telemetry?.origin === 'simulated' ? 'simulador local' : 'aguardando'}</span>
-          <span>Velocidade, marcha e volta fictícias</span>
+          <span>Fonte: {simulated ? 'simulador local' : `UDP${real?.identity ? ` ${real.identity.packetFormat} · carro ${real.identity.playerCarIndex}` : ''}`}</span>
+          <span>{simulated ? 'Velocidade, marcha e volta fictícias' : '— indica dado ausente ou desatualizado'}</span>
         </div>
       </section>
 
@@ -61,7 +77,7 @@ export function App() {
 
       <footer className="footer">
         <span>F1 25 <span className="separator">/</span> TEMPORADA 2026</span>
-        <span>RECEPÇÃO E DIAGNÓSTICO</span>
+        <span>TELEMETRIA E DIAGNÓSTICO</span>
       </footer>
     </main>
   )

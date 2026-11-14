@@ -34,7 +34,7 @@ export function UdpDiagnostics() {
         Inválidos: {diagnostic?.invalidPackets ?? 0} · Não suportados: {diagnostic?.unsupportedPackets ?? 0}
       </p>
       {diagnostic?.error && <p className="udp-error" role="alert">{diagnostic.error}</p>}
-      <p>Somente diagnóstico de recepção. Velocidade, marcha e volta acima continuam simuladas.</p>
+      <p>Contadores de recepção e cabeçalhos; não comprovam a validade do payload nem a origem no jogo.</p>
     </section>
   )
 }

@@ -12,7 +12,11 @@
 body { margin: 0; min-width: 580px; }
 .pitwall { max-width: 1160px; margin: 0 auto; padding: 44px 40px 28px; }
 .header, .panel-heading, .panel-footer, .footer { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
-.header { margin-bottom: 48px; }
+.header { margin-bottom: 24px; }
+.mode-selector { display: flex; gap: 8px; margin-bottom: 16px; }
+.mode-selector button { font: inherit; font-size: 11px; font-weight: 600; padding: 10px 14px; border: 1px solid #414854; border-radius: 5px; background: #16191f; color: #c4c8d0; cursor: pointer; }
+.mode-selector button[aria-pressed="true"] { border-color: #ed4048; color: #fff; background: #2c171c; }
+.mode-selector button:focus-visible { outline: 2px solid #ff9699; outline-offset: 3px; }
 .eyebrow { margin: 0 0 10px; font-size: 10px; font-weight: 600; letter-spacing: 2px; color: #a4a9b3; }
 h1 { margin: 0; font-size: 30px; font-weight: 800; letter-spacing: -1px; }
 h1 span { font-weight: 400; color: #c4c8d0; }

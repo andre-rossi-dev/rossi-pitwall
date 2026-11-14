@@ -1,12 +1,15 @@
 import { app, BrowserWindow, ipcMain } from 'electron'
 import type { IpcMainEvent } from 'electron'
 import { join } from 'node:path'
-import { TELEMETRY_CHANNEL, UDP_DIAGNOSTICS_CHANNEL, UDP_DIAGNOSTICS_REQUEST_CHANNEL } from '../shared/ipc'
+import { TELEMETRY_CHANNEL, UDP_DIAGNOSTICS_CHANNEL, UDP_DIAGNOSTICS_REQUEST_CHANNEL,
+  REAL_TELEMETRY_CHANNEL, REAL_TELEMETRY_REQUEST_CHANNEL } from '../shared/ipc'
 import type { TelemetrySnapshot, TelemetrySource } from '../shared/telemetry'
 import type { UdpDiagnosticSnapshot } from '../shared/udp'
 import { SimulatedTelemetrySource } from './telemetry/SimulatedTelemetrySource'
 import { UdpReceiver } from './udp/UdpReceiver'
 import { readUdpPort } from './udp/config'
+import { RealTelemetrySource } from './telemetry/RealTelemetrySource'
+import type { RealTelemetrySnapshot } from '../shared/realTelemetry'
 
 let mainWindow: BrowserWindow | null = null
 let releaseSources: (() => Promise<void>) | undefined
@@ -54,17 +57,35 @@ function createWindow(): void {
     }
   }
   ipcMain.on(UDP_DIAGNOSTICS_REQUEST_CHANNEL, requestDiagnostics)
+  const realSource = new RealTelemetrySource(udp)
+  const sendRealTelemetry = (snapshot: RealTelemetrySnapshot): void => {
+    if (!window.isDestroyed() && !window.webContents.isLoadingMainFrame()) {
+      window.webContents.send(REAL_TELEMETRY_CHANNEL, snapshot)
+    }
+  }
+  const unsubscribeReal = realSource.subscribe(sendRealTelemetry)
+  const requestRealTelemetry = (event: IpcMainEvent): void => {
+    if (!window.isDestroyed() && event.sender === window.webContents &&
+        event.senderFrame === window.webContents.mainFrame) {
+      sendRealTelemetry(realSource.getSnapshot())
+    }
+  }
+  ipcMain.on(REAL_TELEMETRY_REQUEST_CHANNEL, requestRealTelemetry)
   let shutdown: Promise<void> | undefined
   const cleanup = (): Promise<void> => {
     if (shutdown) return shutdown
     unsubscribe()
     unsubscribeUdp()
+    unsubscribeReal()
+    ipcMain.removeListener(REAL_TELEMETRY_REQUEST_CHANNEL, requestRealTelemetry)
+    realSource.stop()
     ipcMain.removeListener(UDP_DIAGNOSTICS_REQUEST_CHANNEL, requestDiagnostics)
     source.stop()
     shutdown = udp.stop()
     return shutdown
   }
   releaseSources = cleanup
+  realSource.start()
   void udp.start()
 
   window.webContents.on('did-finish-load', () => {
