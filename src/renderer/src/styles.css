@@ -33,6 +33,12 @@ dd small { font-size: 14px; font-weight: 400; color: #a4a9b3; letter-spacing: 0;
 .footer { margin-top: 25px; font-size: 10px; letter-spacing: 1.2px; color: #969daa; }
 .separator { color: #ed4048; margin: 0 8px; }
 
+.udp-diagnostics { margin-top: 18px; padding: 16px 20px; border: 1px solid #2b3039; border-radius: 8px; color: #a4a9b3; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.udp-heading { display: flex; justify-content: space-between; gap: 8px 20px; flex-wrap: wrap; }
+.udp-heading h2 { font-size: 13px; color: #c4c8d0; }
+.udp-diagnostics p { margin: 6px 0 0; }
+.udp-error { color: #ff9699; }
+
 @media (max-width: 720px) {
   .pitwall { padding: 28px 22px; }
   .header { margin-bottom: 30px; }
