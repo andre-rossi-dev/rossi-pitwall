@@ -1,11 +1,16 @@
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, ipcMain } from 'electron'
+import type { IpcMainEvent } from 'electron'
 import { join } from 'node:path'
-import { TELEMETRY_CHANNEL } from '../shared/ipc'
+import { TELEMETRY_CHANNEL, UDP_DIAGNOSTICS_CHANNEL, UDP_DIAGNOSTICS_REQUEST_CHANNEL } from '../shared/ipc'
 import type { TelemetrySnapshot, TelemetrySource } from '../shared/telemetry'
+import type { UdpDiagnosticSnapshot } from '../shared/udp'
 import { SimulatedTelemetrySource } from './telemetry/SimulatedTelemetrySource'
+import { UdpReceiver } from './udp/UdpReceiver'
+import { readUdpPort } from './udp/config'
 
 let mainWindow: BrowserWindow | null = null
-let releaseTelemetry: (() => void) | undefined
+let releaseSources: (() => Promise<void>) | undefined
+let readyToQuit = false
 
 function createWindow(): void {
   const window = new BrowserWindow({
@@ -35,13 +40,35 @@ function createWindow(): void {
     }
   }
   const unsubscribe = source.subscribe(sendSnapshot)
-  const cleanup = (): void => {
-    unsubscribe()
-    source.stop()
+  const udp = new UdpReceiver(readUdpPort(process.env.ROSSI_UDP_PORT))
+  const sendDiagnostics = (snapshot: UdpDiagnosticSnapshot): void => {
+    if (!window.isDestroyed() && !window.webContents.isLoadingMainFrame()) {
+      window.webContents.send(UDP_DIAGNOSTICS_CHANNEL, snapshot)
+    }
   }
-  releaseTelemetry = cleanup
+  const unsubscribeUdp = udp.subscribe(sendDiagnostics)
+  const requestDiagnostics = (event: IpcMainEvent): void => {
+    if (!window.isDestroyed() && event.sender === window.webContents &&
+        event.senderFrame === window.webContents.mainFrame) {
+      sendDiagnostics(udp.getSnapshot())
+    }
+  }
+  ipcMain.on(UDP_DIAGNOSTICS_REQUEST_CHANNEL, requestDiagnostics)
+  let shutdown: Promise<void> | undefined
+  const cleanup = (): Promise<void> => {
+    if (shutdown) return shutdown
+    unsubscribe()
+    unsubscribeUdp()
+    ipcMain.removeListener(UDP_DIAGNOSTICS_REQUEST_CHANNEL, requestDiagnostics)
+    source.stop()
+    shutdown = udp.stop()
+    return shutdown
+  }
+  releaseSources = cleanup
+  void udp.start()
 
   window.webContents.on('did-finish-load', () => {
+    sendDiagnostics(udp.getSnapshot())
     if (source.getSnapshot().status === 'running') {
       sendSnapshot(source.getSnapshot())
     } else {
@@ -50,12 +77,13 @@ function createWindow(): void {
   })
   window.once('ready-to-show', () => window.show())
   window.on('closed', () => {
-    cleanup()
-    releaseTelemetry = undefined
+    void cleanup().then(() => {
+      if (releaseSources === cleanup) releaseSources = undefined
+    })
     mainWindow = null
   })
 
-  // A V0.1 só carrega a interface local e não concede permissões a páginas.
+  // A aplicação só carrega a interface local e não concede permissões a páginas.
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   window.webContents.on('will-navigate', (event) => event.preventDefault())
   window.webContents.on('will-attach-webview', (event) => event.preventDefault())
@@ -79,7 +107,14 @@ void app.whenReady().then(() => {
   })
 })
 
-app.on('before-quit', () => releaseTelemetry?.())
+app.on('before-quit', (event) => {
+  if (readyToQuit || !releaseSources) return
+  event.preventDefault()
+  void releaseSources().then(() => {
+    readyToQuit = true
+    app.quit()
+  })
+})
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })

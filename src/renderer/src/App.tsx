@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { TelemetrySnapshot } from '../../shared/telemetry'
+import { UdpDiagnostics } from './UdpDiagnostics'
 
 export function App() {
   const [telemetry, setTelemetry] = useState<TelemetrySnapshot | null>(null)
@@ -17,7 +18,7 @@ export function App() {
     <main className="pitwall">
       <header className="header">
         <div>
-          <p className="eyebrow">ENGENHEIRO DE CORRIDA · V0.1</p>
+          <p className="eyebrow">ENGENHEIRO DE CORRIDA · V0.2A</p>
           <h1>ROSSI <span>PITWALL</span></h1>
         </div>
         <span className="simulation-badge">SIMULAÇÃO</span>
@@ -52,13 +53,15 @@ export function App() {
 
         <div className="panel-footer">
           <span>Fonte: {telemetry?.origin === 'simulated' ? 'simulador local' : 'aguardando'}</span>
-          <span>Dados fictícios · sem conexão com o jogo</span>
+          <span>Velocidade, marcha e volta fictícias</span>
         </div>
       </section>
 
+      <UdpDiagnostics />
+
       <footer className="footer">
         <span>F1 25 <span className="separator">/</span> TEMPORADA 2026</span>
-        <span>FUNDAÇÃO TÉCNICA</span>
+        <span>RECEPÇÃO E DIAGNÓSTICO</span>
       </footer>
     </main>
   )
