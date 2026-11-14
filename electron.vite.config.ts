@@ -15,8 +15,10 @@ export default defineConfig({
       {
         name: 'development-csp',
         apply: 'serve',
-        // O preâmbulo do React Refresh é inline apenas no desenvolvimento.
-        transformIndexHtml: (html) => html.replace("script-src 'self'", "script-src 'self' 'unsafe-inline'")
+        // React Refresh e o WebSocket do HMR são permitidos apenas no desenvolvimento.
+        transformIndexHtml: (html) => html
+          .replace("script-src 'self'", "script-src 'self' 'unsafe-inline'")
+          .replace("connect-src 'self'", "connect-src 'self' ws://127.0.0.1:*")
       }
     ],
     server: { host: '127.0.0.1' }
