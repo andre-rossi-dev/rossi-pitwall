@@ -14,6 +14,7 @@ export class UdpReceiver implements UdpDiagnosticSource {
   private lifecycle = Promise.resolve()
   private closing: Promise<void> | undefined
   private readonly listeners = new Set<UdpDiagnosticListener>()
+  private readonly datagramListeners = new Set<(datagram: Buffer) => void>()
   private lastArrival = 0
   private dirty = false
   private snapshot: UdpDiagnosticSnapshot
@@ -38,6 +39,14 @@ export class UdpReceiver implements UdpDiagnosticSource {
     // Serializa start/stop, inclusive quando o bind ainda está pendente.
     this.lifecycle = this.lifecycle.then(() => this.open())
     return this.lifecycle
+  }
+
+  // Uso interno do Main: o mesmo socket alimenta diagnóstico e decodificação.
+  // O consumidor lê sincronamente e não deve modificar nem reter o Buffer.
+  subscribeDatagrams(listener: (datagram: Buffer) => void): Unsubscribe {
+    const subscription = (datagram: Buffer): void => listener(datagram)
+    this.datagramListeners.add(subscription)
+    return () => { this.datagramListeners.delete(subscription) }
   }
 
   stop(): Promise<void> {
@@ -115,6 +124,7 @@ export class UdpReceiver implements UdpDiagnosticSource {
       unsupportedPackets: current.unsupportedPackets + Number(lastPacket.kind === 'unsupported'),
       lastReceivedAt: Date.now(), lastPacket
     })
+    this.datagramListeners.forEach((listener) => listener(datagram))
   }
 
   private flush(): void {

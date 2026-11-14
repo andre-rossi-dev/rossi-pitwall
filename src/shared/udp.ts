@@ -31,7 +31,7 @@ export interface UdpDiagnosticSnapshot {
 
 export type UdpDiagnosticListener = (snapshot: UdpDiagnosticSnapshot) => void
 
-// Diagnóstico não produz TelemetrySample: as métricas da V0.1 continuam simuladas.
+// Diagnóstico permanece independente da camada de decodificação de métricas.
 export interface UdpDiagnosticSource {
   start(): Promise<void>
   stop(): Promise<void>

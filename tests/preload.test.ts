@@ -1,7 +1,8 @@
 import { EventEmitter } from 'node:events'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PitwallApi } from '../src/shared/ipc'
-import { TELEMETRY_CHANNEL, UDP_DIAGNOSTICS_CHANNEL, UDP_DIAGNOSTICS_REQUEST_CHANNEL } from '../src/shared/ipc'
+import { TELEMETRY_CHANNEL, UDP_DIAGNOSTICS_CHANNEL, UDP_DIAGNOSTICS_REQUEST_CHANNEL,
+  REAL_TELEMETRY_CHANNEL, REAL_TELEMETRY_REQUEST_CHANNEL } from '../src/shared/ipc'
 import type { TelemetrySnapshot } from '../src/shared/telemetry'
 
 const electron = vi.hoisted(() => ({ exposeInMainWorld: vi.fn(), send: vi.fn() }))
@@ -24,7 +25,7 @@ describe('ponte restrita do preload', () => {
 
   it('expõe somente inscrições nos canais de telemetria e diagnóstico', () => {
     expect(electron.exposeInMainWorld).toHaveBeenCalledWith('pitwall', api)
-    expect(Object.keys(api)).toEqual(['onTelemetry', 'onUdpDiagnostics'])
+    expect(Object.keys(api)).toEqual(['onTelemetry', 'onUdpDiagnostics', 'onRealTelemetry'])
     expect(Object.isFrozen(api)).toBe(true)
   })
 
@@ -58,6 +59,31 @@ describe('ponte restrita do preload', () => {
     expect(callback).not.toHaveBeenCalled()
     emitter.emit(TELEMETRY_CHANNEL, { sender: 'privilegiado' }, snapshot)
     expect(callback).toHaveBeenCalledExactlyOnceWith(snapshot)
+  })
+
+  it('inscreve telemetria real antes do snapshot inicial e cancela cada listener', () => {
+    const real = { origin: 'udp', status: 'waiting', motion: null, lap: null }
+    const simulated = vi.fn()
+    const diagnostic = vi.fn()
+    api.onTelemetry(simulated)
+    api.onUdpDiagnostics(diagnostic)
+    electron.send.mockClear()
+    electron.send.mockImplementationOnce(() => {
+      emitter.emit(REAL_TELEMETRY_CHANNEL, { sender: 'privilegiado' }, real)
+    })
+    const callback = vi.fn()
+    const cancel = api.onRealTelemetry(callback)
+    expect(callback).toHaveBeenCalledExactlyOnceWith(real)
+    expect(electron.send).toHaveBeenCalledExactlyOnceWith(REAL_TELEMETRY_REQUEST_CHANNEL)
+    const cancelSecond = api.onRealTelemetry(callback)
+    cancel()
+    cancel()
+    expect(emitter.listenerCount(REAL_TELEMETRY_CHANNEL)).toBe(1)
+    cancelSecond()
+    api.onRealTelemetry(callback)()
+    expect(emitter.listenerCount(REAL_TELEMETRY_CHANNEL)).toBe(0)
+    expect(simulated).not.toHaveBeenCalled()
+    expect(diagnostic).not.toHaveBeenCalled()
   })
 
   it('registra o listener UDP antes de solicitar o snapshot inicial', () => {

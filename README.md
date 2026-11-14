@@ -1,8 +1,8 @@
-# ROSSI Pitwall — V0.2A
+# ROSSI Pitwall — V0.2B
 
 Fundação de um aplicativo desktop para Windows que futuramente atuará como engenheiro de corrida local para o **EA SPORTS F1 25**, com temporada **2026** por pacote visual e física padrão do jogo.
 
-**Velocidade, marcha e volta continuam exclusivamente fictícias.** O selo **SIMULAÇÃO** permanece visível. A V0.2A adiciona recepção UDP e diagnóstico de cabeçalhos em um painel separado, sem interpretar os dados de corrida. O simulador funciona sem abrir o F1 25.
+**UDP REAL** decodifica velocidade, marcha e volta do jogador nos formatos 2025 e 2026. **SIMULAÇÃO** mantém o simulador local com valores explicitamente fictícios, sem abrir o jogo. O modo selecionado permanece visível; dados reais ausentes ou vencidos aparecem como **—**, sem preenchimento pelo simulador. A primeira comparação visual com o HUD do F1 25 foi relatada pelo usuário nos dois formatos; observações e limites estão em [Validação V0.2B](docs/validation-v0.2b.md).
 
 ## Escopo implementado
 
@@ -13,6 +13,7 @@ Fundação de um aplicativo desktop para Windows que futuramente atuará como en
 - Receptor UDP independente do React, usando `node:dgram` no Main, em `127.0.0.1:20777` por padrão.
 - Porta configurável, estados de recepção, contadores de pacotes/bytes e tratamento de porta ocupada sem interromper o simulador.
 - Inspeção dos cabeçalhos 2025/2026 conforme a EA; formatos desconhecidos são informados sem interpretar o layout.
+- Parser de Car Telemetry (ID 6: velocidade/marcha) e Lap Data (ID 2: volta), com seleção de `playerCarIndex`, sessão uint64 preservada e expiração independente dos dois grupos.
 - Testes automatizados com Vitest, UDP local e roteiro de integração com Electron real.
 
 ## Stack e pré-requisitos
@@ -73,7 +74,7 @@ Teste opcional de integração após o build:
 npm run test:smoke
 ```
 
-Ele abre uma janela Electron real, verifica isolamento, API restrita, simulação contínua, recepção de uma **fixture sintética UDP**, diagnóstico inicial, silêncio após 3 segundos, recarga e largura mínima. Fecha a janela automaticamente e retorna código zero em caso de sucesso. Usa uma porta local efêmera, sem depender da porta do jogo. O perfil e as imagens de verificação ficam em `.smoke-profile/`, ignorado pelo Git. Precisa de uma sessão gráfica do Windows.
+Ele abre uma janela Electron real e verifica isolamento, API restrita, modos real/simulado, diagnóstico, **pacotes sintéticos completos 2025/2026**, R/N, dados parciais, mudança de sessão/formato, expiração, retomada, recarga e largura mínima. Fecha a janela automaticamente e retorna código zero em caso de sucesso. Usa uma porta local efêmera, sem depender da porta do jogo. O perfil e as imagens de verificação ficam em `.smoke-profile/`, ignorado pelo Git. Precisa de uma sessão gráfica do Windows; não substitui o teste com o jogo.
 
 Há também cenários de porta ocupada e configuração inválida:
 
@@ -85,7 +86,7 @@ npm run test:smoke
 $env:ROSSI_SMOKE_UDP_MODE = $null
 ```
 
-Os resultados efetivamente obtidos e as pendências desta entrega estão em [Validação V0.2A](docs/validation-v0.2a.md).
+Os resultados desta entrega estão em [Validação V0.2B](docs/validation-v0.2b.md). O histórico anterior permanece em [Validação V0.2A](docs/validation-v0.2a.md).
 
 Para verificar também o caminho de desenvolvimento, com o mesmo teste:
 
@@ -102,21 +103,24 @@ src/
     udp/
       config.ts                      Endereço fixo e validação da porta
       inspectHeader.ts               Inspeção defensiva do cabeçalho EA
+      decodeTelemetry.ts             Parser dos payloads IDs 2/6 por formato
       UdpReceiver.ts                 Socket, contadores e diagnóstico
     telemetry/
       SimulatedTelemetrySource.ts    Geração determinística no Main
+      RealTelemetrySource.ts         Sessão, estado parcial e frescor no Main
   preload/
     index.ts                         Ponte restrita window.pitwall
   renderer/
     index.html                       Documento e política de conteúdo
     src/
       App.tsx                        Interface e inscrição com cleanup
-      UdpDiagnostics.tsx             Diagnóstico separado das métricas simuladas
+      UdpDiagnostics.tsx             Diagnóstico independente do modo selecionado
       main.tsx                       Entrada React com StrictMode
       env.d.ts                       Tipagem da API exposta
       styles.css                     Identidade visual e layout responsivo
   shared/
     telemetry.ts                     Amostra, estado e contrato da fonte
+    realTelemetry.ts                 Estado UDP parcial e validade por grupo
     ipc.ts                           Canal e API pública
     udp.ts                           Contrato de diagnóstico (sem TelemetrySample)
 tests/
@@ -124,7 +128,10 @@ tests/
   preload.test.ts
   udp-header.test.ts
   udp-receiver.test.ts
+  real-telemetry-parser.test.ts
+  real-telemetry-source.test.ts
   fixtures/f1-header.ts               Cabeçalho sintético documentado
+  fixtures/f1-telemetry.ts            Payloads completos sintéticos
 scripts/
   smoke.cjs                          Integração com Electron real
 ```
@@ -133,11 +140,13 @@ Fluxo: **SimulatedTelemetrySource → Main → canal `pitwall:telemetry` → Pre
 
 Fluxo adicional: **UDP local → UdpReceiver → Main → canal `pitwall:udp-diagnostics` → Preload → painel de diagnóstico**. O UDP não alimenta as métricas simuladas.
 
+Fluxo real: **mesmo UdpReceiver → decodeTelemetry → RealTelemetrySource → canal `pitwall:real-telemetry` → Preload → React**. Nenhum datagrama bruto atravessa IPC. A camada real publica estados a até 10 Hz; cada grupo vence após 3 segundos de ausência de pacotes válidos daquele tipo. Trocar sessão, formato ou índice do jogador limpa os dados anteriores. O detalhamento de offsets e políticas está em [Protocolo UDP](docs/udp-protocol.md).
+
 O Main é dono da fonte e do timer. A janela inicia a fonte quando a página termina de carregar. Recarregar a página não cria outro timer nem reinicia a sequência. Ao fechar a janela ou sair do aplicativo, o Main cancela sua inscrição e para a fonte.
 
-O Preload oferece apenas `window.pitwall.onTelemetry(callback)` e `window.pitwall.onUdpDiagnostics(callback)`, ambas com cancelamento individual. O evento interno do Electron não chega ao React. O `useEffect` da interface usa o cancelamento como cleanup, inclusive no ciclo adicional do StrictMode. Ao inscrever o diagnóstico, o Preload solicita o snapshot atual pelo canal interno `pitwall:udp-diagnostics:request`, sem argumentos, evitando perda do estado inicial se o React montar depois do carregamento.
+O Preload oferece apenas `window.pitwall.onTelemetry(callback)`, `onUdpDiagnostics(callback)` e `onRealTelemetry(callback)`, todas com cancelamento individual. O evento interno do Electron não chega ao React. O `useEffect` usa o cancelamento como cleanup, inclusive no ciclo adicional do StrictMode. Para diagnóstico e telemetria real, o Preload instala o listener antes de solicitar o snapshot atual pelos respectivos canais internos de request, sem argumentos, evitando perda do estado inicial.
 
-O único pedido do Renderer ao Main lê o diagnóstico atual; o Main verifica a janela e o frame remetentes. Não há comandos de rede nem configuração expostos ao React. `contextIsolation` e `sandbox` estão habilitados; `nodeIntegration` e `webviewTag`, desabilitados. Novas janelas, navegações iniciadas pela página e permissões são bloqueadas. O preload é um único bundle CommonJS compatível com sandbox. A política de conteúdo permite o preâmbulo inline do React Refresh somente no desenvolvimento; scripts inline são bloqueados no build de produção.
+Os pedidos do Renderer ao Main leem diagnóstico ou telemetria real atuais; o Main verifica a janela e o frame remetentes. Não há comandos de rede nem configuração expostos ao React. `contextIsolation` e `sandbox` estão habilitados; `nodeIntegration` e `webviewTag`, desabilitados. Novas janelas, navegações iniciadas pela página e permissões são bloqueadas. O preload é um único bundle CommonJS compatível com sandbox. A política de conteúdo permite o preâmbulo inline do React Refresh somente no desenvolvimento; scripts inline são bloqueados no build de produção.
 
 ### Contrato da fonte
 
@@ -145,7 +154,7 @@ O único pedido do Renderer ao Main lê o diagnóstico atual; o Main verifica a 
 
 O simulador reinicia a sequência ao chamar `start` após `stop`. Usa o identificador fixo `simulation-v0.1`, sem aleatoriedade nem dependência do relógio real. Ele não reproduz a física do F1 25; velocidades, marchas e duração das voltas são apenas demonstrativas.
 
-Os metadados simulados incluem origem, sessão, frame, tempo da sessão e versão do protocolo. `protocolVersion: null` continua correto para o simulador. O valor `udp` permanece reservado no contrato de amostras: o novo receptor usa `UdpDiagnosticSource`, sem fabricar velocidade, marcha ou volta reais.
+Os metadados simulados incluem origem, sessão, frame, tempo da sessão e versão do protocolo. `protocolVersion: null` continua correto para o simulador. A fonte real usa `RealTelemetrySnapshot`, separado do contrato de amostra completa do simulador, pois os grupos podem estar ausentes ou vencer independentemente. `sessionId` real é uma string decimal que preserva todos os bits do uint64.
 
 **Tempo, frame e volta não são contratos de ordem crescente.** A interface aceita cada amostra simulada recebida, e o receptor não descarta cabeçalhos por retrocesso de tempo/frame. Não há detecção nem reconciliação de flashbacks. O pacote visual 2026 não determina a versão UDP: a identificação usa exclusivamente `packetFormat` nos bytes recebidos.
 
@@ -198,8 +207,8 @@ Os testes UDP usam sockets locais reais com portas efêmeras e **buffers sintét
 
 ## Validação manual no Windows
 
-1. Execute `npm run dev` sem abrir o F1 25.
-2. Confirme o nome ROSSI PITWALL, o selo SIMULAÇÃO e o estado Fonte ativa.
+1. Execute `npm run dev` sem abrir o F1 25. O modo inicial é UDP REAL: confirme **Aguardando dados** e três valores **—**.
+2. Selecione SIMULAÇÃO e confirme o nome ROSSI PITWALL, o selo SIMULAÇÃO e o estado Fonte ativa.
 3. Observe velocidade e marcha mudando; após 60 segundos, a volta avança para 2.
 4. Redimensione a janela, inclusive até o tamanho mínimo, e verifique legibilidade e ausência de cortes.
 5. Feche a janela e confira que o processo termina. Execute novamente e confirme que a simulação recomeça.
@@ -217,14 +226,28 @@ A recepção nos formatos UDP 2025 e 2026 foi validada manualmente pelo usuário
 6. Recarregue a página (`Ctrl+R`): os contadores não devem zerar e a simulação deve continuar. Verifique legibilidade em 980×660 e 640×500; a janela menor pode exigir rolagem vertical.
 7. Feche o Pitwall e abra novamente: a porta deve ser liberada e os contadores reiniciados. Para testar conflito, abra uma segunda instância na mesma porta: ela deve mostrar `EADDRINUSE` e continuar simulando.
 
-Mesmo recebendo UDP, **velocidade, marcha e volta continuam fictícias**. Cabeçalho reconhecido não valida o payload nem autentica que o remetente é o jogo. O parser de corrida fica para uma próxima entrega explicitamente autorizada.
+Esse histórico valida apenas a recepção da V0.2A. Na V0.2B, os indicadores dependem do modo selecionado. Cabeçalho reconhecido não valida o payload nem autentica que o remetente é o jogo.
+
+### Validação V0.2B com o jogo
+
+Em relato recebido em 14/11/2026, o usuário observou velocidade, marchas R/N/1–8 e volta acompanhando o jogo, expiração após aproximadamente 3 segundos de interrupção, retomada e aceitação de retrocessos em flashbacks repetidos, inclusive para uma volta anterior. Os formatos 2025 e 2026 funcionaram nos testes manuais, com o jogo em janela 1280×720 ao lado do Pitwall. São observações visuais, sem medição de latência ou comprovação de ausência de perdas, sincronização perfeita ou reconciliação completa de flashbacks. Veja o [registro detalhado](docs/validation-v0.2b.md#primeira-validação-manual-com-o-f1-25-real).
+
+O roteiro abaixo permanece para repetição e ampliação dos testes; o relato não confirma a execução de todos os seus passos. A entrega aguarda revisão de código antes da publicação.
+
+1. Execute `npm run build` e `npm start`, selecione **UDP REAL** e configure o jogo como acima, inicialmente em UDP 2025.
+2. Na pista, compare velocidade em km/h, marcha e volta com o HUD. Verifique parado (0 km/h), neutro (N), ré (R) e marchas 1–8 quando possível. A interface atualiza a até 10 Hz, sem sincronização exata de frames com o HUD.
+3. Repita no formato UDP 2026 e confirme o formato observado no rodapé e no diagnóstico. Se possível, use uma sessão com índice de jogador diferente de zero; registre o índice exibido.
+4. Desative a transmissão UDP: após 3 segundos mais até um ciclo de publicação (100 ms), os grupos vencidos devem virar **—** e o estado indicar **Dados desatualizados**. Reative e confira a recuperação. Silêncio não é identificado como pausa.
+5. Troque de sessão/formato e confira que volta e velocidade antigas não aparecem combinadas com a nova identidade. Faça um flashback e confira a aceitação do retrocesso; a V0.2B não reconcilia pacotes atrasados.
+6. Alterne para SIMULAÇÃO e volte para UDP REAL: valores fictícios nunca devem preencher o modo real. Recarregue a página: volta a UDP REAL, preservando o estado Main e os contadores. Teste 980×660 e 640×500; rolagem vertical é esperada na janela menor.
+7. Feche/reabra o aplicativo, confirme liberação da porta e registre build do jogo, formato, taxa UDP, índice, valores comparados e divergências. Repita os cenários nos dois formatos antes de publicar a entrega.
 
 ## Limitações e próximas entregas
 
-A V0.2A acrescenta somente recepção e diagnóstico UDP à fundação V0.1. Não há parser de payload, velocidade/marcha/volta reais, identificação operacional de sessão, estratégias, dados reais de pneus/combustível/ERS, gaps, clima, bandeiras, Safety Car/VSC, rádio/voz, overlay, atalhos, reconciliação de flashbacks/pausas, gravação, replay, banco de dados ou instalador Windows.
+A V0.2B decodifica somente os três indicadores do jogador primário em IDs 2/6, versão 1, formatos 2025/2026. Não há parser completo, estratégias, pneus/combustível/ERS, gaps, clima, bandeiras, Safety Car/VSC, rádio/voz, overlay, atalhos, reconciliação de flashbacks/pausas, gravação, replay, banco de dados ou instalador Windows. Pacotes atrasados prevalecem na ordem de chegada; não há histórico de sessões nem autenticação do emissor. Pacotes repetidos podem continuar chegando com o jogo parado.
 
 O uso futuro será local, offline e com um único monitor. O aplicativo não injeta código nem manipula o processo do jogo. Não depende de ReShade, Project Halo ou outros addons visuais. Não há suporte específico a SWOFTY Progressive Career nem a temporadas históricas.
 
-A recepção com o F1 25 real já foi relatada para os formatos 2025 e 2026. O parser de telemetria real está fora desta implementação. Esta entrega não inclui merge nem exclusão de branches.
+A recepção com o F1 25 real foi relatada na V0.2A; a primeira comparação visual dos indicadores com o HUD foi relatada na V0.2B, nos formatos 2025 e 2026. Os testes automatizados usam conteúdo sintético e permanecem separados dessas observações. A revisão do código precede a publicação; esta tarefa não inclui commit, push ou merge.
 
 Referências técnicas: [electron-vite](https://electron-vite.org/guide/) e [segurança do Electron](https://www.electronjs.org/docs/latest/tutorial/security).

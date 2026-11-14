@@ -3,6 +3,8 @@ import type { Socket, SocketType } from 'node:dgram'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { UdpReceiver, DIAGNOSTIC_INTERVAL_MS, UDP_IDLE_MS } from '../src/main/udp/UdpReceiver'
 import { syntheticHeader } from './fixtures/f1-header'
+import { syntheticTelemetry } from './fixtures/f1-telemetry'
+import { RealTelemetrySource } from '../src/main/telemetry/RealTelemetrySource'
 
 const { createdSockets } = vi.hoisted(() => ({ createdSockets: [] as Socket[] }))
 vi.mock('node:dgram', async (importOriginal) => {
@@ -66,6 +68,33 @@ afterEach(async () => {
 })
 
 describe('UdpReceiver com sockets UDP locais e fixtures sintéticas', () => {
+  it('alimenta telemetria e diagnóstico pelo mesmo socket com cancelamentos independentes', async () => {
+    const udp = receiver()
+    const real = new RealTelemetrySource(udp)
+    const callback = vi.fn()
+    const cancelFirst = udp.subscribeDatagrams(callback)
+    const cancelSecond = udp.subscribeDatagrams(callback)
+    cancellations.push(cancelFirst, cancelSecond)
+    cancelFirst()
+    cancelFirst()
+    real.start()
+    try {
+      await udp.start()
+      expect(createdSockets).toHaveLength(1)
+      const client = sender()
+      await send(client, udp, syntheticTelemetry(6, { format: 2026, player: 23 }))
+      await send(client, udp, syntheticTelemetry(2, { format: 2026, player: 23 }))
+      expect(real.getSnapshot()).toMatchObject({ motion: { speedKph: 287 }, lap: { number: 12 } })
+      expect(udp.getSnapshot()).toMatchObject({ packetsReceived: 2, headers2026: 2, bytesReceived: 2847 })
+      expect(callback).toHaveBeenCalledTimes(2)
+      cancelSecond()
+      real.stop()
+      await send(client, udp, syntheticTelemetry(6))
+      expect(callback).toHaveBeenCalledTimes(2)
+      expect(real.getSnapshot()).toMatchObject({ status: 'stopped', motion: null })
+      expect(udp.getSnapshot().packetsReceived).toBe(3)
+    } finally { real.stop() }
+  })
   it('inicia e encerra de forma idempotente, libera porta e listeners', async () => {
     const source = receiver()
     expect(source.getSnapshot().status).toBe('stopped')
