@@ -1,0 +1,43 @@
+:root {
+  font-family: "Segoe UI", Arial, sans-serif;
+  color: #f0f1f3;
+  background: #0d0f12;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 580px; }
+.pitwall { max-width: 1160px; margin: 0 auto; padding: 44px 40px 28px; }
+.header, .panel-heading, .panel-footer, .footer { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.header { margin-bottom: 48px; }
+.eyebrow { margin: 0 0 10px; font-size: 10px; font-weight: 600; letter-spacing: 2px; color: #a4a9b3; }
+h1 { margin: 0; font-size: 30px; font-weight: 800; letter-spacing: -1px; }
+h1 span { font-weight: 400; color: #c4c8d0; }
+.simulation-badge { border: 1px solid #b14b4e; background: #2c171c; color: #ff9699; border-radius: 5px; padding: 9px 12px; font-size: 11px; font-weight: 700; letter-spacing: 1.3px; }
+.telemetry-panel { background: #16191f; border: 1px solid #2b3039; border-top: 3px solid #ed4048; border-radius: 10px; overflow: hidden; }
+.panel-heading { padding: 28px; }
+h2 { font-size: 18px; font-weight: 500; margin: 0; }
+.source-status { display: flex; align-items: center; gap: 8px; color: #b1b6c0; font-size: 12px; white-space: nowrap; }
+.status-dot { width: 6px; height: 6px; border-radius: 50%; background: #818895; }
+.is-running .status-dot { background: #80d4ad; }
+.metrics { display: grid; grid-template-columns: 1.6fr 1fr 1fr; margin: 12px 28px 32px; }
+.metric { padding: 8px 26px; border-left: 1px solid #30353f; }
+.metric:first-child { border-left: 0; padding-left: 0; }
+dt { color: #a4a9b3; font-size: 11px; letter-spacing: 1.5px; }
+dd { margin: 10px 0 0; font-size: clamp(44px, 7vw, 76px); line-height: 1.1; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -2px; }
+dd small { font-size: 14px; font-weight: 400; color: #a4a9b3; letter-spacing: 0; margin-left: 10px; }
+.panel-footer { padding: 16px 28px; background: #13161b; border-top: 1px solid #2b3039; font-size: 11px; color: #a4a9b3; flex-wrap: wrap; gap: 8px; }
+.footer { margin-top: 25px; font-size: 10px; letter-spacing: 1.2px; color: #969daa; }
+.separator { color: #ed4048; margin: 0 8px; }
+
+@media (max-width: 720px) {
+  .pitwall { padding: 28px 22px; }
+  .header { margin-bottom: 30px; }
+  .panel-heading { align-items: flex-start; flex-direction: column; gap: 4px; padding: 22px; }
+  .metrics { margin-left: 22px; margin-right: 22px; }
+  .metric { padding-right: 14px; padding-left: 18px; }
+  .panel-footer { padding: 16px 22px; }
+}
