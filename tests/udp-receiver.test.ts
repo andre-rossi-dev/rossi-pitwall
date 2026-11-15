@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { UdpReceiver, DIAGNOSTIC_INTERVAL_MS, UDP_IDLE_MS } from '../src/main/udp/UdpReceiver'
 import { syntheticHeader } from './fixtures/f1-header'
 import { syntheticTelemetry } from './fixtures/f1-telemetry'
+import { syntheticSession } from './fixtures/f1-session'
 import { RealTelemetrySource } from '../src/main/telemetry/RealTelemetrySource'
 
 const { createdSockets } = vi.hoisted(() => ({ createdSockets: [] as Socket[] }))
@@ -87,12 +88,16 @@ describe('UdpReceiver com sockets UDP locais e fixtures sintéticas', () => {
       expect(real.getSnapshot()).toMatchObject({ motion: { speedKph: 287 }, lap: { number: 12 } })
       expect(udp.getSnapshot()).toMatchObject({ packetsReceived: 2, headers2026: 2, bytesReceived: 2847 })
       expect(callback).toHaveBeenCalledTimes(2)
+      await send(client, udp, syntheticSession({ format: 2026, player: 23 }))
+      expect(createdSockets).toHaveLength(2) // Um receptor e o remetente da fixture.
+      expect(real.getSnapshot()).toMatchObject({ contextStatus: 'identified', context: { sessionType: 1, trackId: 16 } })
+      expect(udp.getSnapshot()).toMatchObject({ packetsReceived: 3, headers2026: 3, bytesReceived: 3773 })
       cancelSecond()
       real.stop()
-      await send(client, udp, syntheticTelemetry(6))
-      expect(callback).toHaveBeenCalledTimes(2)
-      expect(real.getSnapshot()).toMatchObject({ status: 'stopped', motion: null })
-      expect(udp.getSnapshot().packetsReceived).toBe(3)
+      await send(client, udp, syntheticSession())
+      expect(callback).toHaveBeenCalledTimes(3)
+      expect(real.getSnapshot()).toMatchObject({ status: 'stopped', motion: null, context: null })
+      expect(udp.getSnapshot().packetsReceived).toBe(4)
     } finally { real.stop() }
   })
   it('inicia e encerra de forma idempotente, libera porta e listeners', async () => {

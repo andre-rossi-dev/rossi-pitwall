@@ -1,4 +1,5 @@
 import type { Unsubscribe } from './telemetry'
+import type { SessionContext, SessionContextStatus } from './sessionContext'
 
 export type DataFreshness = 'waiting' | 'fresh' | 'stale'
 
@@ -27,6 +28,10 @@ export interface RealTelemetrySnapshot {
   readonly origin: 'udp'
   readonly status: 'stopped' | 'waiting' | 'receiving' | 'stale'
   readonly identity: RealTelemetryIdentity | null
+  // Incrementa apenas em transições técnicas confirmadas; não conta fins de semana.
+  readonly identityRevision: number
+  readonly contextStatus: SessionContextStatus
+  readonly context: SessionContext | null
   // Campos ausentes ou vencidos nunca são publicados como medições atuais.
   readonly motion: RealMotion | null
   readonly lap: RealLap | null

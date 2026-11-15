@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { TelemetrySnapshot } from '../../shared/telemetry'
 import type { RealTelemetrySnapshot } from '../../shared/realTelemetry'
+import { SESSION_TYPES, TRACKS } from '../../shared/sessionContext'
 import { UdpDiagnostics } from './UdpDiagnostics'
 
 export function App() {
@@ -29,7 +30,7 @@ export function App() {
     <main className="pitwall">
       <header className="header">
         <div>
-          <p className="eyebrow">ENGENHEIRO DE CORRIDA · V0.2B</p>
+          <p className="eyebrow">ENGENHEIRO DE CORRIDA · V0.2C-B</p>
           <h1>ROSSI <span>PITWALL</span></h1>
         </div>
         <span className="simulation-badge">{simulated ? 'SIMULAÇÃO' : 'UDP REAL'}</span>
@@ -66,6 +67,14 @@ export function App() {
             <dd data-testid="lap">{lap ?? '—'}</dd>
           </div>
         </dl>
+
+        {!simulated && (
+          <p className="session-context" data-testid="session-context">
+            {real?.context
+              ? `${real.context.sessionType === null ? 'Sessão desconhecida' : SESSION_TYPES[real.context.sessionType]} · ${real.context.trackId === null ? 'Circuito desconhecido' : TRACKS[real.context.trackId]}`
+              : real?.contextStatus === 'unavailable' ? 'Contexto da sessão indisponível' : 'Aguardando contexto da sessão'}
+          </p>
+        )}
 
         <div className="panel-footer">
           <span>Fonte: {simulated ? 'simulador local' : `UDP${real?.identity ? ` ${real.identity.packetFormat} · carro ${real.identity.playerCarIndex}` : ''}`}</span>

@@ -1,4 +1,4 @@
-# ROSSI Pitwall — V0.2C-A
+# ROSSI Pitwall — V0.2C-B
 
 Fundação de um aplicativo desktop para Windows que futuramente atuará como engenheiro de corrida local para o **EA SPORTS F1 25**, com temporada **2026** por pacote visual e física padrão do jogo.
 
@@ -15,6 +15,7 @@ Fundação de um aplicativo desktop para Windows que futuramente atuará como en
 - Inspeção dos cabeçalhos 2025/2026 conforme a EA; formatos desconhecidos são informados sem interpretar o layout.
 - Parser de Car Telemetry (ID 6: velocidade/marcha) e Lap Data (ID 2: volta), com seleção de `playerCarIndex`, sessão uint64 preservada e expiração independente dos dois grupos.
 - Integridade temporal por grupo usando `overallFrameIdentifier`, preservação de flashbacks, confirmação de identidade e proteção limitada em memória contra sessões substituídas.
+- Contexto mínimo de Session Data (ID 1) em 2025/2026: tipo de sessão, circuito e vínculos lógicos de temporada/fim de semana/sessão, separados do UID técnico. Indicação discreta na interface, com desconhecidos explícitos e expiração independente.
 - Testes automatizados com Vitest, UDP local e roteiro de integração com Electron real.
 
 ## Stack e pré-requisitos
@@ -87,7 +88,7 @@ npm run test:smoke
 $env:ROSSI_SMOKE_UDP_MODE = $null
 ```
 
-Os resultados desta entrega estão em [Validação V0.2C-A](docs/validation-v0.2c-a.md). O histórico permanece em [Validação V0.2B](docs/validation-v0.2b.md) e [Validação V0.2A](docs/validation-v0.2a.md).
+Os resultados desta entrega estão em [Validação V0.2C-B](docs/validation-v0.2c-b.md). O histórico permanece em [Validação V0.2C-A](docs/validation-v0.2c-a.md), [Validação V0.2B](docs/validation-v0.2b.md) e [Validação V0.2A](docs/validation-v0.2a.md).
 
 Para verificar também o caminho de desenvolvimento, com o mesmo teste:
 
@@ -105,6 +106,7 @@ src/
       config.ts                      Endereço fixo e validação da porta
       inspectHeader.ts               Inspeção defensiva do cabeçalho EA
       decodeTelemetry.ts             Parser dos payloads IDs 2/6 por formato
+      decodeSession.ts               Contexto mínimo do ID 1 por formato
       UdpReceiver.ts                 Socket, contadores e diagnóstico
     telemetry/
       SimulatedTelemetrySource.ts    Geração determinística no Main
@@ -122,6 +124,7 @@ src/
   shared/
     telemetry.ts                     Amostra, estado e contrato da fonte
     realTelemetry.ts                 Estado UDP parcial e validade por grupo
+    sessionContext.ts                Tipo/circuito, vínculos e estados do contexto
     ipc.ts                           Canal e API pública
     udp.ts                           Contrato de diagnóstico (sem TelemetrySample)
 tests/
@@ -131,8 +134,10 @@ tests/
   udp-receiver.test.ts
   real-telemetry-parser.test.ts
   real-telemetry-source.test.ts
+  session-parser.test.ts
   fixtures/f1-header.ts               Cabeçalho sintético documentado
   fixtures/f1-telemetry.ts            Payloads completos sintéticos
+  fixtures/f1-session.ts              Session Data sintético 2025/2026
 scripts/
   smoke.cjs                          Integração com Electron real
 ```
@@ -141,7 +146,11 @@ Fluxo: **SimulatedTelemetrySource → Main → canal `pitwall:telemetry` → Pre
 
 Fluxo adicional: **UDP local → UdpReceiver → Main → canal `pitwall:udp-diagnostics` → Preload → painel de diagnóstico**. O UDP não alimenta as métricas simuladas.
 
-Fluxo real: **mesmo UdpReceiver → decodeTelemetry → RealTelemetrySource → canal `pitwall:real-telemetry` → Preload → React**. Nenhum datagrama bruto atravessa IPC. A camada real publica estados a até 10 Hz; cada grupo vence após 3 segundos sem amostra aceita como nova. Duplicações e atrasos não renovam frescor. Confirmar a troca de sessão, formato ou índice do jogador limpa os dados anteriores. O detalhamento de offsets e políticas está em [Protocolo UDP](docs/udp-protocol.md).
+Fluxo real: **mesmo UdpReceiver → decodeTelemetry/decodeSession → RealTelemetrySource → canal `pitwall:real-telemetry` → Preload → React**. Nenhum datagrama bruto atravessa IPC. A camada real publica estados a até 10 Hz; cada grupo vence após 3 segundos sem amostra aceita como nova. Duplicações e atrasos não renovam frescor. Confirmar a troca de sessão, formato ou índice do jogador limpa os dados anteriores. O detalhamento de offsets e políticas está em [Protocolo UDP](docs/udp-protocol.md).
+
+O contexto usa a identidade técnica `(sessionUID, packetFormat, playerCarIndex)` e mantém separados os vínculos `seasonLinkIdentifier`, `weekendLinkIdentifier` e `sessionLinkIdentifier`. Vínculos zero e códigos desconhecidos viram `null`. O ID 1 pode estar ausente sem interromper velocidade, marcha ou volta. Na interface, contexto fresco mostra tipo/circuito reconhecidos; contexto ausente aguarda dados, e contexto vencido ou contraditório aparece como indisponível. O estado da fonte continua descrevendo as métricas, independentemente do contexto.
+
+Mudança de UID não significa automaticamente mudança de fim de semana. Retomada com UID novo exige a confirmação existente e limpa as métricas anteriores, mesmo que os vínculos sejam iguais. A proteção dos oito UIDs substituídos permanece: os vínculos persistentes também podem estar em pacotes antigos e não comprovam uma retomada de UID bloqueado. Contexto contraditório sob a mesma identidade técnica fica indisponível até troca confirmada ou reinício; as métricas continuam sem associação lógica. Não há persistência nem agrupamento histórico de sessões.
 
 O Main é dono da fonte e do timer. A janela inicia a fonte quando a página termina de carregar. Recarregar a página não cria outro timer nem reinicia a sequência. Ao fechar a janela ou sair do aplicativo, o Main cancela sua inscrição e para a fonte.
 
@@ -256,12 +265,24 @@ Em relato recebido em 14/11/2026, o usuário informou sucesso nos seis cenários
 
 Registre versão/build do jogo, formato observado, taxa UDP, índice do jogador, sequência de ações e resultados separadamente por formato. Reordenação, duplicação, wraparound e UIDs antigos são exercitados por fixtures determinísticas; o HUD sozinho não comprova esses cenários. Detalhes, limites e evidências em [Validação V0.2C-A](docs/validation-v0.2c-a.md).
 
+### Validação V0.2C-B com o jogo
+
+Em relato recebido em 15/11/2026, o usuário informou aprovação de TL1/TL2/TL3, Q1/Q2/Q3, corrida, flashbacks/pausas, retomada de save e troca de GP/circuito com UDP 2025/2026, sem comportamento anormal, travamentos ou congelamentos observados. São observações do usuário, sem medição automatizada nem comprovação de funcionamento universal. O [registro detalhado](docs/validation-v0.2c-b.md#validação-manual-com-o-f1-25-real--relato-do-usuário) mantém as limitações de UIDs, contadores, contradições, flashbacks e a intermitência gráfica. O roteiro abaixo permanece para repetição; não implica que todos os seus passos técnicos tenham sido executados.
+
+1. Execute `npm run build` e `npm start`. Em UDP REAL, percorra TL1/TL2/TL3, classificação e corrida e compare os rótulos de sessão/circuito com o jogo. Repita em 2025 e 2026.
+2. Troque de fim de semana e retome um save. Observe se contexto e métricas se atualizam sem herdar valores da transmissão anterior. Vínculos/UIDs não aparecem no painel; o [roteiro técnico](docs/validation-v0.2c-b.md#roteiro-manual-com-f1-25) explica como inspecionar o snapshot opcionalmente.
+3. Faça flashbacks, pause/retome e use Alt+Tab. Desative explicitamente o UDP por mais de três segundos para verificar expiração e retomada; silêncio não deve ser declarado como pausa ou fim de sessão.
+4. Alterne 2025 → 2026 → 2025, recarregue com `Ctrl+R`, alterne real/simulado e feche/reabra. Confira contexto, ausência de dados fictícios no modo real e liberação da porta.
+5. Se o contexto ficar indisponível ou as métricas não retomarem, registre a sequência antes de reiniciar. Reutilização de UID bloqueado, reset de contador e mudança de contexto sob o mesmo UID continuam limitações defensivas, sem recuperação inferida.
+
+Os resultados automatizados anteriores, a falha gráfica observada e o relato manual estão separados no [registro da versão](docs/validation-v0.2c-b.md).
+
 ## Limitações e próximas entregas
 
-A V0.2C-A decodifica somente os três indicadores do jogador primário em IDs 2/6, versão 1, formatos 2025/2026. Não há parser completo, estratégias, pneus/combustível/ERS, gaps, clima, bandeiras, Safety Car/VSC, rádio/voz, overlay, atalhos, reconciliação completa de flashbacks/pausas, gravação, replay, banco de dados ou instalador Windows. A ordenação modular por grupo pressupõe distância inferior a meia faixa uint32; empates e ambiguidades são descartados. A confirmação de identidade e a fila dos oito últimos UIDs substituídos reduzem alternâncias indevidas, sem autenticar o emissor nem garantir proteção contra todo atraso. Não há histórico persistente. Pacotes repetidos podem continuar chegando com o jogo parado e não mantêm medições frescas.
+A V0.2C-B decodifica os três indicadores do jogador primário em IDs 2/6 e contexto mínimo do ID 1, versão 1, formatos 2025/2026. Não há parser completo, estratégias, pneus/combustível/ERS, gaps, clima, bandeiras, Safety Car/VSC, rádio/voz, overlay, atalhos, reconciliação completa de flashbacks/pausas, gravação, replay, banco de dados ou instalador Windows. A ordenação modular por grupo pressupõe distância inferior a meia faixa uint32; empates e ambiguidades são descartados. A confirmação de identidade e a fila dos oito últimos UIDs substituídos reduzem alternâncias indevidas, sem autenticar o emissor nem garantir proteção contra todo atraso. Não há histórico persistente. Pacotes repetidos podem continuar chegando com o jogo parado e não mantêm medições frescas.
 
 O uso futuro será local, offline e com um único monitor. O aplicativo não injeta código nem manipula o processo do jogo. Não depende de ReShade, Project Halo ou outros addons visuais. Não há suporte específico a SWOFTY Progressive Career nem a temporadas históricas.
 
-A recepção com o F1 25 real foi relatada na V0.2A; a primeira comparação visual dos indicadores com o HUD foi relatada na V0.2B, nos formatos 2025 e 2026. A validação manual da V0.2C-A também foi relatada, nos seis cenários descritos acima. Os testes automatizados usam conteúdo sintético e permanecem separados dessas observações. Commit e push da branch V0.2C-A foram autorizados; a revisão técnica independente ocorrerá antes do merge.
+A recepção com o F1 25 real foi relatada na V0.2A; a primeira comparação visual dos indicadores com o HUD foi relatada na V0.2B, nos formatos 2025 e 2026. A validação manual da V0.2C-A também foi relatada, e sua integração à main foi confirmada na preparação da V0.2C-B. Os testes automatizados usam conteúdo sintético e permanecem separados dessas observações. Após o relato manual da V0.2C-B, o usuário autorizou commit e push exclusivamente da branch `feat/v0.2c-session-lifecycle`. A revisão independente permanece pendente antes do merge; não há autorização para integrar à main.
 
 Referências técnicas: [electron-vite](https://electron-vite.org/guide/) e [segurança do Electron](https://www.electronjs.org/docs/latest/tutorial/security).

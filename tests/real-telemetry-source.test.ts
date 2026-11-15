@@ -6,6 +6,7 @@ import {
 import { UdpReceiver } from '../src/main/udp/UdpReceiver'
 import type { UdpDiagnosticListener, UdpStatus } from '../src/shared/udp'
 import { syntheticTelemetry } from './fixtures/f1-telemetry'
+import { syntheticSession } from './fixtures/f1-session'
 
 describe('estado de telemetria real (fixtures sintéticas, relógio controlado)', () => {
   let source: RealTelemetrySource
@@ -13,6 +14,10 @@ describe('estado de telemetria real (fixtures sintéticas, relógio controlado)'
   let diagnostics: Set<UdpDiagnosticListener>
   const send = (id: 2 | 6, options?: Parameters<typeof syntheticTelemetry>[1]) => {
     const packet = syntheticTelemetry(id, options)
+    packets.forEach((callback) => callback(packet))
+  }
+  const session = (options?: Parameters<typeof syntheticSession>[0]) => {
+    const packet = syntheticSession(options)
     packets.forEach((callback) => callback(packet))
   }
   const status = (value: UdpStatus) => diagnostics.forEach((callback) => callback({
@@ -376,5 +381,254 @@ describe('estado de telemetria real (fixtures sintéticas, relógio controlado)'
     source.start()
     send(6, { session: 2n, overallFrame: 0 })
     expect(source.getSnapshot()).toMatchObject({ identity: { sessionId: '2' }, motion: { overallFrameId: 0 }, lap: null })
+  })
+
+  it('mantém telemetria sem ID 1 e identifica contexto sem fabricar métricas', () => {
+    source.start()
+    send(6)
+    send(2)
+    expect(source.getSnapshot()).toMatchObject({ contextStatus: 'unidentified', context: null, identityRevision: 0 })
+    source.stop()
+    source.start()
+    session()
+    expect(source.getSnapshot()).toMatchObject({
+      status: 'waiting', contextStatus: 'identified', context: { sessionType: 1, trackId: 16 }, motion: null, lap: null
+    })
+    expect(Object.isFrozen(source.getSnapshot().context)).toBe(true)
+  })
+
+  it.each([2025, 2026] as const)('transita TL1/TL2/TL3/classificação/corrida no mesmo fim de semana em %i', (format) => {
+    source.start()
+    session({ format, session: 1n, sessionLink: 1 })
+    send(6, { format, session: 1n })
+    send(2, { format, session: 1n })
+    let revision = 0
+    for (const sessionType of [2, 3, 5, 6, 7, 15]) {
+      const uid = BigInt(sessionType)
+      const original = source.getSnapshot()
+      session({ format, session: uid, sessionType, sessionLink: sessionType, overallFrame: 0 })
+      expect(source.getSnapshot()).toEqual(original)
+      vi.advanceTimersByTime(500) // ID 1 nominalmente a 2 Hz, ainda dentro da janela existente.
+      session({ format, session: uid, sessionType, sessionLink: sessionType, overallFrame: 1 })
+      revision++
+      expect(source.getSnapshot()).toMatchObject({
+        identity: { sessionId: String(uid) }, identityRevision: revision,
+        contextStatus: 'identified', context: { sessionType, weekendLinkIdentifier: 0x23456789 }, motion: null, lap: null
+      })
+      send(6, { format, session: uid })
+      send(2, { format, session: uid })
+    }
+  })
+
+  it('troca fim de semana sem herdar grupos e aceita retomada de vínculo lógico com UID novo', () => {
+    source.start()
+    session({ session: 1n, weekendLink: 10, sessionLink: 100 })
+    send(6, { session: 1n })
+    // Vínculos iguais não dispensam confirmação nem carregam medições do save anterior.
+    session({ session: 2n, weekendLink: 10, sessionLink: 100, overallFrame: 0 })
+    expect(source.getSnapshot().identity?.sessionId).toBe('1')
+    session({ session: 2n, weekendLink: 10, sessionLink: 100, overallFrame: 1 })
+    expect(source.getSnapshot()).toMatchObject({ identityRevision: 1, context: { weekendLinkIdentifier: 10, sessionLinkIdentifier: 100 }, motion: null })
+    session({ session: 3n, weekendLink: 11, sessionLink: 101, trackId: 0, overallFrame: 0 })
+    session({ session: 3n, weekendLink: 11, sessionLink: 101, trackId: 0, overallFrame: 1 })
+    expect(source.getSnapshot()).toMatchObject({ identityRevision: 2, context: { weekendLinkIdentifier: 11, trackId: 0 }, motion: null })
+  })
+
+  it('limpa contexto na troca confirmada por métricas, mesmo sem ID 1 novo', () => {
+    source.start()
+    session({ session: 1n })
+    send(6, { session: 2n, overallFrame: 0 })
+    send(6, { session: 2n, overallFrame: 1 })
+    expect(source.getSnapshot()).toMatchObject({ identityRevision: 1, context: null, contextStatus: 'unidentified', motion: { overallFrameId: 1 } })
+    // Contexto antigo, inclusive com contador maior, não reaparece.
+    session({ session: 1n, overallFrame: 300 })
+    session({ session: 1n, overallFrame: 301 })
+    expect(source.getSnapshot()).toMatchObject({ identity: { sessionId: '2' }, context: null })
+  })
+
+  it.each([0, 0x3456789a, 777])('não desbloqueia UID aposentado por vínculos iguais, zero ou diferentes (%i)', (sessionLink) => {
+    source.start()
+    session({ session: 1n })
+    session({ session: 2n, overallFrame: 0 })
+    session({ session: 2n, overallFrame: 1 })
+    vi.advanceTimersByTime(60000)
+    status('idle')
+    for (const overallFrame of [0, 1, 300, 301]) session({ session: 1n, sessionLink, overallFrame })
+    expect(source.getSnapshot()).toMatchObject({ identity: { sessionId: '2' }, identityRevision: 1, context: null, contextStatus: 'unavailable' })
+    // Reinício explícito limpa a proteção; não é recuperação inferida pelo silêncio.
+    source.stop()
+    source.start()
+    session({ session: 1n, overallFrame: 0 })
+    expect(source.getSnapshot()).toMatchObject({ identity: { sessionId: '1' }, identityRevision: 0, contextStatus: 'identified' })
+  })
+
+  it.each([2025, 2026] as const)('ordena contexto separadamente e preserva flashback em %i', (format) => {
+    source.start()
+    send(6, { format, overallFrame: 10000 })
+    session({ format, overallFrame: 10 })
+    session({ format, overallFrame: 11, frame: 1, time: -1 })
+    const latest = source.getSnapshot()
+    for (const overallFrame of [10, 11, 0, 0x8000000b]) {
+      session({ format, overallFrame, sessionType: 15, weekendLink: 999 })
+    }
+    expect(source.getSnapshot()).toEqual(latest)
+    expect(latest.context).toMatchObject({ overallFrameId: 11, frameId: 1, sessionTimeSeconds: -1 })
+  })
+
+  it('preserva wraparound do contexto e rejeita pacote pré-wrap atrasado', () => {
+    source.start()
+    session({ overallFrame: 0xffffffff })
+    session({ overallFrame: 0 })
+    session({ overallFrame: 0xffffffff, sessionType: 15 })
+    expect(source.getSnapshot()).toMatchObject({ contextStatus: 'identified', context: { overallFrameId: 0, sessionType: 1 } })
+  })
+
+  it('expira e publica contexto independentemente; silêncio, repetição e reset não renovam', () => {
+    source.start()
+    session()
+    const listener = vi.fn()
+    source.subscribe(listener)
+    vi.advanceTimersByTime(2000)
+    send(6)
+    send(2)
+    session()
+    session({ overallFrame: 0 })
+    vi.advanceTimersByTime(999)
+    expect(source.getSnapshot().contextStatus).toBe('identified')
+    vi.advanceTimersByTime(1)
+    expect(listener).toHaveBeenLastCalledWith(expect.objectContaining({ contextStatus: 'unavailable', context: null, status: 'receiving' }))
+    status('idle')
+    session({ overallFrame: 201 })
+    expect(source.getSnapshot()).toMatchObject({ identityRevision: 0, contextStatus: 'identified' })
+    // Só contexto novo não mantém velocidade e volta frescas.
+    vi.advanceTimersByTime(2000)
+    session({ overallFrame: 202 })
+    expect(source.getSnapshot()).toMatchObject({ contextStatus: 'identified', motion: null, lap: null, status: 'stale' })
+  })
+
+  it('não compara IDs distintos para confirmar e conserva o instante do contexto candidato', () => {
+    source.start()
+    session({ session: 1n })
+    session({ session: 2n, overallFrame: 0 })
+    vi.advanceTimersByTime(500)
+    send(6, { session: 2n, overallFrame: 1 })
+    expect(source.getSnapshot().identity?.sessionId).toBe('1')
+    send(6, { session: 2n, overallFrame: 2 })
+    expect(source.getSnapshot()).toMatchObject({ identity: { sessionId: '2' }, context: { overallFrameId: 0 } })
+    vi.advanceTimersByTime(2500)
+    expect(source.getSnapshot()).toMatchObject({ contextStatus: 'unavailable', motionFreshness: 'fresh' })
+  })
+
+  it.each([2025, 2026] as const)('alterna formato com contexto e confirma ida e volta a partir de %i', (format) => {
+    source.start()
+    session({ format, overallFrame: 10000 })
+    send(6, { format })
+    for (const next of [format === 2025 ? 2026 : 2025, format] as const) {
+      session({ format: next, overallFrame: 0 })
+      session({ format: next, overallFrame: 1 })
+      expect(source.getSnapshot()).toMatchObject({ identity: { packetFormat: next }, context: { overallFrameId: 1 }, motion: null })
+    }
+    expect(source.getSnapshot().identityRevision).toBe(2)
+  })
+
+  it('mantém desconhecidos explícitos e aceita preenchimento posterior sem reutilizar valores ausentes', () => {
+    source.start()
+    session({ sessionType: 0, trackId: -1, seasonLink: 0, weekendLink: 0, sessionLink: 0 })
+    expect(source.getSnapshot()).toMatchObject({ contextStatus: 'unidentified', context: null })
+    session({ overallFrame: 201 })
+    expect(source.getSnapshot().contextStatus).toBe('identified')
+    session({ overallFrame: 202, sessionType: 0, trackId: -1, seasonLink: 0 })
+    expect(source.getSnapshot().context).toMatchObject({ sessionType: null, trackId: null, seasonLinkIdentifier: null })
+  })
+
+  it.each([
+    { sessionType: 2 }, { trackId: 0 }, { seasonLink: 2 }, { weekendLink: 2 }, { sessionLink: 2 }
+  ])('torna contexto conflitante indisponível sem associar métricas a outro contexto: %o', (change) => {
+    source.start()
+    session()
+    send(6)
+    session({ overallFrame: 201, sessionType: 0, trackId: -1, seasonLink: 0, weekendLink: 0, sessionLink: 0 })
+    session({ ...change, overallFrame: 202 })
+    expect(source.getSnapshot()).toMatchObject({ contextStatus: 'unavailable', context: null, identityRevision: 0, motion: { speedKph: 287 } })
+    session({ overallFrame: 203 })
+    expect(source.getSnapshot().contextStatus).toBe('unavailable')
+    session({ session: 2n, overallFrame: 0 })
+    session({ session: 2n, overallFrame: 1 })
+    expect(source.getSnapshot()).toMatchObject({ contextStatus: 'identified', identityRevision: 1, motion: null })
+  })
+
+  it('contextos candidatos contraditórios não confirmam troca', () => {
+    source.start()
+    session({ session: 1n })
+    session({ session: 2n, overallFrame: 0 })
+    session({ session: 2n, overallFrame: 1, sessionLink: 999 })
+    expect(source.getSnapshot()).toMatchObject({ identity: { sessionId: '1' }, identityRevision: 0 })
+  })
+
+  it('preserva referências conhecidas da candidata quando o pacote de confirmação traz desconhecidos', () => {
+    source.start()
+    session({ session: 1n })
+    session({ session: 2n, sessionLink: 10, overallFrame: 0 })
+    session({ session: 2n, sessionLink: 0, overallFrame: 1 })
+    expect(source.getSnapshot()).toMatchObject({ identity: { sessionId: '2' }, context: { sessionLinkIdentifier: null } })
+    session({ session: 2n, sessionLink: 20, overallFrame: 2 })
+    expect(source.getSnapshot()).toMatchObject({ contextStatus: 'unavailable', context: null })
+  })
+
+  it('não publica nem renova contexto por duplicação, atraso ou payload rejeitado', () => {
+    source.start()
+    session()
+    vi.advanceTimersByTime(100)
+    const listener = vi.fn()
+    const cancel = source.subscribe(listener)
+    listener.mockClear()
+    vi.advanceTimersByTime(1900)
+    session()
+    session({ overallFrame: 199 })
+    const invalid = syntheticSession({ overallFrame: 201, session: 99n })
+    invalid[5] = 2
+    packets.forEach((callback) => callback(invalid))
+    vi.advanceTimersByTime(999)
+    expect(listener).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(1)
+    expect(listener).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      contextStatus: 'unavailable', context: null, identity: expect.objectContaining({ sessionId: '18446744073709551615' })
+    }))
+    cancel()
+  })
+
+  it.each(['starting', 'stopped', 'error'] as const)('limpa contexto e sua ambiguidade quando receptor fica %s', (value) => {
+    source.start()
+    session()
+    session({ overallFrame: 201, sessionLink: 999 })
+    status(value)
+    expect(source.getSnapshot()).toMatchObject({ identity: null, identityRevision: 0, context: null, contextStatus: 'unidentified' })
+    session({ overallFrame: 0 })
+    expect(source.getSnapshot().contextStatus).toBe('identified')
+  })
+
+  it('cancela publicações de contexto individualmente e limpa recursos ao encerrar', () => {
+    source.start()
+    session()
+    const listener = vi.fn()
+    const cancelFirst = source.subscribe(listener)
+    const cancelSecond = source.subscribe(listener)
+    cancelFirst()
+    cancelFirst()
+    listener.mockClear()
+    session({ overallFrame: 201 })
+    vi.advanceTimersByTime(100)
+    expect(listener).toHaveBeenCalledTimes(1)
+    source.stop()
+    expect(listener).toHaveBeenLastCalledWith(expect.objectContaining({ context: null, contextStatus: 'unidentified', status: 'stopped' }))
+    expect(packets.size).toBe(0)
+    expect(diagnostics.size).toBe(0)
+    expect(vi.getTimerCount()).toBe(0)
+    cancelSecond()
+    listener.mockClear()
+    source.start()
+    session({ overallFrame: 0 })
+    vi.advanceTimersByTime(100)
+    expect(listener).not.toHaveBeenCalled()
   })
 })
