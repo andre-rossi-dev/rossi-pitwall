@@ -10,6 +10,7 @@ export interface RealTelemetryIdentity {
 
 export interface PacketTiming {
   readonly frameId: number
+  readonly overallFrameId: number
   readonly sessionTimeSeconds: number
 }
 

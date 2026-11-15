@@ -7,6 +7,7 @@ interface Options {
   player?: number
   session?: bigint
   frame?: number
+  overallFrame?: number
   time?: number
   speed?: number
   gear?: number
@@ -15,7 +16,7 @@ interface Options {
 
 export function syntheticTelemetry(id: 2 | 6, options: Options = {}): Buffer {
   const { format = 2025, player = 3, session = 18446744073709551615n,
-    frame = 100, time = 10.5, speed = 287, gear = 7, lap = 12 } = options
+    frame = 100, overallFrame = 200, time = 10.5, speed = 287, gear = 7, lap = 12 } = options
   const cars = format === 2025 ? 22 : 24
   const stride = id === 2 ? 57 : format === 2025 ? 60 : 59
   const packet = Buffer.alloc(29 + cars * stride + (id === 2 ? 2 : 3))
@@ -23,6 +24,7 @@ export function syntheticTelemetry(id: 2 | 6, options: Options = {}): Buffer {
   packet.writeBigUInt64LE(session, 7)
   packet.writeFloatLE(time, 15)
   packet.writeUInt32LE(frame, 19)
+  packet.writeUInt32LE(overallFrame, 23)
   packet[27] = player
   for (let car = 0; car < cars; car++) {
     const base = 29 + car * stride

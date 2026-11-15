@@ -29,7 +29,11 @@ export function decodeTelemetry(datagram: Buffer): DecodedTelemetry | null {
     packetFormat: header.packetFormat,
     playerCarIndex
   }
-  const timing = { frameId: header.frameId, sessionTimeSeconds: header.sessionTime }
+  const timing = {
+    frameId: header.frameId,
+    overallFrameId: datagram.readUInt32LE(23),
+    sessionTimeSeconds: header.sessionTime
+  }
   const base = HEADER_SIZE + playerCarIndex * packetLayout.stride
   if (header.packetId === 6) {
     const gear = datagram.readInt8(base + 15)
