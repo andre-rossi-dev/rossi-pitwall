@@ -34,6 +34,7 @@ dt { color: #a4a9b3; font-size: 11px; letter-spacing: 1.5px; }
 dd { margin: 10px 0 0; font-size: clamp(44px, 7vw, 76px); line-height: 1.1; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -2px; }
 dd small { font-size: 14px; font-weight: 400; color: #a4a9b3; letter-spacing: 0; margin-left: 10px; }
 .panel-footer { padding: 16px 28px; background: #13161b; border-top: 1px solid #2b3039; font-size: 11px; color: #a4a9b3; flex-wrap: wrap; gap: 8px; }
+.session-context { margin: 0 28px 16px; color: #a4a9b3; font-size: 12px; overflow-wrap: anywhere; }
 .footer { margin-top: 25px; font-size: 10px; letter-spacing: 1.2px; color: #969daa; }
 .separator { color: #ed4048; margin: 0 8px; }
 
@@ -50,4 +51,5 @@ dd small { font-size: 14px; font-weight: 400; color: #a4a9b3; letter-spacing: 0;
   .metrics { margin-left: 22px; margin-right: 22px; }
   .metric { padding-right: 14px; padding-left: 18px; }
   .panel-footer { padding: 16px 22px; }
+  .session-context { margin-left: 22px; margin-right: 22px; }
 }

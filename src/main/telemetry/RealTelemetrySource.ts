@@ -6,6 +6,9 @@ import type { Unsubscribe } from '../../shared/telemetry'
 import type { UdpReceiver } from '../udp/UdpReceiver'
 import { decodeTelemetry } from '../udp/decodeTelemetry'
 import type { DecodedTelemetry } from '../udp/decodeTelemetry'
+import { decodeSession } from '../udp/decodeSession'
+import type { DecodedSession } from '../udp/decodeSession'
+import type { SessionContext, SessionDetails, SessionContextStatus } from '../../shared/sessionContext'
 
 export const REAL_TELEMETRY_INTERVAL_MS = 100
 export const REAL_TELEMETRY_STALE_MS = 3000
@@ -13,11 +16,31 @@ export const IDENTITY_CONFIRMATION_MS = 1000
 export const RETIRED_SESSION_LIMIT = 8
 
 interface Received<T> { readonly data: T; readonly at: number }
+type DecodedPacket = DecodedTelemetry | DecodedSession
+const contextFields = [
+  'sessionType', 'trackId', 'seasonLinkIdentifier', 'weekendLinkIdentifier', 'sessionLinkIdentifier'
+] as const
+
+function conflictingContext(first: SessionDetails, second: SessionDetails): boolean {
+  return contextFields.some((field) => first[field] !== null && second[field] !== null && first[field] !== second[field])
+}
+
+function retainKnownContext(previous: SessionDetails | null, next: SessionDetails): SessionDetails {
+  // Referências internas para detectar contradições; nunca preenchem o snapshot.
+  return {
+    sessionType: previous?.sessionType ?? next.sessionType,
+    trackId: previous?.trackId ?? next.trackId,
+    seasonLinkIdentifier: previous?.seasonLinkIdentifier ?? next.seasonLinkIdentifier,
+    weekendLinkIdentifier: previous?.weekendLinkIdentifier ?? next.weekendLinkIdentifier,
+    sessionLinkIdentifier: previous?.sessionLinkIdentifier ?? next.sessionLinkIdentifier
+  }
+}
 
 interface Candidate {
   readonly identity: RealTelemetryIdentity
   readonly startedAt: number
-  readonly packets: Partial<Record<DecodedTelemetry['kind'], Received<DecodedTelemetry>>>
+  readonly packets: Partial<Record<DecodedPacket['kind'], Received<DecodedPacket>>>
+  contextBinding: SessionDetails | null
 }
 
 function sameIdentity(first: RealTelemetryIdentity, second: RealTelemetryIdentity): boolean {
@@ -40,6 +63,10 @@ export class RealTelemetrySource implements Source {
   private identity: RealTelemetryIdentity | null = null
   private motion: Received<RealMotion> | null = null
   private lap: Received<RealLap> | null = null
+  private context: Received<SessionContext> | null = null
+  private contextBinding: SessionDetails | null = null
+  private contextConflict = false
+  private identityRevision = 0
   private candidate: Candidate | null = null
   private readonly retiredSessions: string[] = []
   private dirty = false
@@ -89,18 +116,24 @@ export class RealTelemetrySource implements Source {
       received === null ? 'waiting' : now - received.at >= REAL_TELEMETRY_STALE_MS ? 'stale' : 'fresh'
     const motionFreshness = freshness(this.motion)
     const lapFreshness = freshness(this.lap)
+    const contextFreshness = freshness(this.context)
+    const contextStatus: SessionContextStatus = this.contextConflict || contextFreshness === 'stale'
+      ? 'unavailable' : this.context && contextFields.some((field) => this.context!.data[field] !== null)
+        ? 'identified' : 'unidentified'
     const status = !this.running ? 'stopped'
       : motionFreshness === 'stale' || lapFreshness === 'stale' ? 'stale'
         : motionFreshness === 'fresh' || lapFreshness === 'fresh' ? 'receiving' : 'waiting'
     return Object.freeze({
       origin: 'udp', status, identity: this.identity, motionFreshness, lapFreshness,
+      identityRevision: this.identityRevision, contextStatus,
+      context: contextStatus === 'identified' ? this.context!.data : null,
       motion: motionFreshness === 'fresh' ? this.motion!.data : null,
       lap: lapFreshness === 'fresh' ? this.lap!.data : null
     })
   }
 
   private readonly receive = (datagram: Buffer): void => {
-    const packet = decodeTelemetry(datagram)
+    const packet = decodeTelemetry(datagram) ?? decodeSession(datagram)
     if (!packet) return
     if (this.retiredSessions.includes(packet.sessionId)) return
     const at = this.now()
@@ -111,13 +144,21 @@ export class RealTelemetrySource implements Source {
     if (!sameIdentity(this.identity, identity)) {
       if (!this.candidate || !sameIdentity(this.candidate.identity, identity) ||
           at - this.candidate.startedAt >= IDENTITY_CONFIRMATION_MS) {
-        this.candidate = { identity, startedAt: at, packets: {} }
+        this.candidate = { identity, startedAt: at, packets: {}, contextBinding: null }
       }
       const candidate = this.candidate
       const previous = candidate.packets[packet.kind]
       if (previous && !isNewerFrame(packet.data.overallFrameId, previous.data.data.overallFrameId)) return
+      if (packet.kind === 'session') {
+        if (candidate.contextBinding && conflictingContext(candidate.contextBinding, packet.data)) {
+          // Contextos contraditórios não formam evidência coerente de uma candidata.
+          this.candidate = null
+          return
+        }
+        candidate.contextBinding = retainKnownContext(candidate.contextBinding, packet.data)
+      }
       candidate.packets[packet.kind] = { data: packet, at }
-      // Confirma somente com avanço no MESMO grupo; ID 2 e ID 6 não precisam
+      // Confirma somente com avanço no MESMO grupo; IDs 1, 2 e 6 não precisam
       // compartilhar frames, frequência ou sequer estar ambos disponíveis.
       if (!previous) return
       if (this.identity.sessionId !== identity.sessionId) {
@@ -127,19 +168,31 @@ export class RealTelemetrySource implements Source {
       this.identity = identity
       this.motion = null
       this.lap = null
+      this.context = null
+      this.contextBinding = candidate.contextBinding
+      this.contextConflict = false
+      this.identityRevision++
       this.candidate = null
       for (const received of Object.values(candidate.packets)) this.apply(received.data, received.at)
       return
     }
-    const previous = packet.kind === 'motion' ? this.motion : this.lap
+    const previous = packet.kind === 'motion' ? this.motion : packet.kind === 'lap' ? this.lap : this.context
     if (previous && !isNewerFrame(packet.data.overallFrameId, previous.data.overallFrameId)) return
     this.candidate = null
     this.apply(packet, at)
   }
 
-  private apply(packet: DecodedTelemetry, at: number): void {
+  private apply(packet: DecodedPacket, at: number): void {
     if (packet.kind === 'motion') this.motion = { data: Object.freeze(packet.data), at }
-    else this.lap = { data: Object.freeze(packet.data), at }
+    else if (packet.kind === 'lap') this.lap = { data: Object.freeze(packet.data), at }
+    else {
+      const previous = this.contextBinding
+      if (previous && conflictingContext(previous, packet.data)) this.contextConflict = true
+      // Guarda só referências conhecidas desta identidade. null não apaga uma
+      // referência anterior nem transforma um vínculo conflitante em retomada.
+      this.contextBinding = retainKnownContext(previous, packet.data)
+      this.context = { data: Object.freeze(packet.data), at }
+    }
     this.dirty = true
   }
 
@@ -147,6 +200,10 @@ export class RealTelemetrySource implements Source {
     this.identity = null
     this.motion = null
     this.lap = null
+    this.context = null
+    this.contextBinding = null
+    this.contextConflict = false
+    this.identityRevision = 0
     this.candidate = null
     this.retiredSessions.length = 0
     this.dirty = true
@@ -155,7 +212,8 @@ export class RealTelemetrySource implements Source {
   private flush(): void {
     const snapshot = this.getSnapshot()
     if (this.dirty || snapshot.motionFreshness !== this.published?.motionFreshness ||
-        snapshot.lapFreshness !== this.published?.lapFreshness) this.publish(snapshot)
+        snapshot.lapFreshness !== this.published?.lapFreshness ||
+        snapshot.contextStatus !== this.published?.contextStatus) this.publish(snapshot)
   }
 
   private publish(snapshot: RealTelemetrySnapshot): void {
