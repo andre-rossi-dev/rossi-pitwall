@@ -85,6 +85,38 @@ function syntheticSession(format, {
   return packet
 }
 
+// Pneus SINTÉTICOS completos, independentes do parser; ordem TE, TD, FE, FD.
+function syntheticTyres(format, id, {
+  session = 123n, overallFrame = 200, frame = 100, time = 10.5,
+  actual = 18, visual = 16, age = 8, wear = [11.25, 22.5, 33.75, 44]
+} = {}) {
+  const cars = format === 2025 ? 22 : 24
+  const stride = id === 7 ? (format === 2025 ? 55 : 59) : 46
+  const packet = Buffer.alloc(29 + cars * stride)
+  syntheticHeader().copy(packet)
+  packet.writeUInt16LE(format, 0)
+  packet[6] = id
+  packet[27] = cars - 1
+  packet.writeBigUInt64LE(session, 7)
+  packet.writeUInt32LE(overallFrame, 23)
+  packet.writeUInt32LE(frame, 19)
+  packet.writeFloatLE(time, 15)
+  for (let car = 0; car < cars; car++) {
+    const base = 29 + car * stride
+    if (id === 7) {
+      packet[base + 25] = car === cars - 1 ? actual : 20
+      packet[base + 26] = car === cars - 1 ? visual : 18
+      packet[base + 27] = car === cars - 1 ? age : 1
+    } else {
+      for (let wheel = 0; wheel < 4; wheel++) {
+        packet.writeFloatLE(car === cars - 1 ? wear[wheel] : car + wheel, base + wheel * 4)
+        packet[base + 16 + wheel] = 91 + wheel
+      }
+    }
+  }
+  return packet
+}
+
 async function sendFixture(packet) {
   await new Promise((resolve, reject) => {
     fixtureSocket.send(packet, udpPort, '127.0.0.1', (error) => error ? reject(error) : resolve())
@@ -148,6 +180,7 @@ app.once('browser-window-created', (_event, window) => {
       await waitForUi(window, `${metricEquals('speed', '—')} && ${metricEquals('gear', '—')} && ${metricEquals('lap', '—')}`)
       await waitForUi(window, `document.querySelector('[data-testid="source-status"]').textContent === 'Aguardando dados'`)
       await waitForUi(window, metricEquals('session-context', 'Aguardando contexto da sessão'))
+      await waitForUi(window, `${metricEquals('tyre-age', '—')} && ${metricEquals('tyre-frontLeft', '—')}`)
       await selectMode(window, 'simulated')
       await waitForUi(window, `document.querySelector('[data-testid="source-status"]').textContent === 'Fonte ativa'`)
       assert.equal(await window.webContents.executeJavaScript('document.querySelector(\'[data-testid="session-context"]\') === null'), true)
@@ -199,6 +232,7 @@ app.once('browser-window-created', (_event, window) => {
       assert.ok(ui.gear >= 1 && ui.gear <= 8)
       assert.equal(ui.lap, 1)
       assert.equal(ui.nodeAccess, 'undefined')
+      assert.equal(await window.webContents.executeJavaScript('document.querySelector(\'[data-testid="tyre-panel"]\') === null'), true)
       assert.deepEqual(ui.apiKeys, ['onTelemetry', 'onUdpDiagnostics', 'onRealTelemetry'])
 
       if (udpMode === 'receive') {
@@ -225,6 +259,23 @@ app.once('browser-window-created', (_event, window) => {
           await sendFixture(syntheticTelemetry(format, 2, { overallFrame: 201 }))
           await waitForUi(window, `${metricEquals('lap', 12)} && ${metricEquals('speed', '—')}`)
           await waitForUi(window, metricEquals('session-context', 'Aguardando contexto da sessão'))
+          await waitForUi(window, `${metricEquals('tyre-age', '—')} && ${metricEquals('tyre-frontLeft', '—')}`)
+          await sendFixture(syntheticTyres(format, 7))
+          await waitForUi(window, `${metricEquals('tyre-visual', 'Macio')} && ${metricEquals('tyre-actual', 'C3')} && ${metricEquals('tyre-age', 8)} && ${metricEquals('tyre-frontLeft', '—')}`)
+          await sendFixture(syntheticTyres(format, 10, { overallFrame: 50 }))
+          await waitForUi(window, `${metricEquals('tyre-frontLeft', '33,8%')} && ${metricEquals('tyre-frontRight', '44%')} && ${metricEquals('tyre-rearLeft', '11,3%')} && ${metricEquals('tyre-rearRight', '22,5%')}`)
+          await sendFixture(syntheticTyres(format, 7, { age: 99 })) // Duplicata.
+          await sendFixture(syntheticTyres(format, 10, { overallFrame: 49, wear: [99, 99, 99, 99] }))
+          await waitForAllPackets()
+          assert.equal(await window.webContents.executeJavaScript(metricEquals('tyre-age', 8)), true)
+          assert.equal(await window.webContents.executeJavaScript(metricEquals('tyre-frontLeft', '33,8%')), true)
+          await sendFixture(syntheticTyres(format, 7, { overallFrame: 201, frame: 1, time: 0.5, age: 0 }))
+          await sendFixture(syntheticTyres(format, 10, { overallFrame: 51, frame: 2, time: 1, wear: [0, 1, 2, 3] }))
+          await waitForUi(window, `${metricEquals('tyre-age', 0)} && ${metricEquals('tyre-frontLeft', '2%')}`)
+          // Troca de pneus sintética: tempo/frame avançam, composto muda e desgaste diminui.
+          await sendFixture(syntheticTyres(format, 7, { overallFrame: 202, frame: 3, time: 2, actual: 20, visual: 18, age: 0 }))
+          await sendFixture(syntheticTyres(format, 10, { overallFrame: 52, frame: 4, time: 2.5, wear: [0, 0, 0, 0] }))
+          await waitForUi(window, `${metricEquals('tyre-actual', 'C1')} && ${metricEquals('tyre-visual', 'Duro')} && ${metricEquals('tyre-age', 0)} && ${metricEquals('tyre-frontLeft', '0%')} && ${metricEquals('tyre-frontRight', '0%')} && ${metricEquals('tyre-rearLeft', '0%')} && ${metricEquals('tyre-rearRight', '0%')}`)
           await sendFixture(syntheticSession(format))
           await waitForUi(window, metricEquals('session-context', 'Treino livre 1 · Brasil'))
           // Duplicata conflitante e contexto antigo não trocam o rótulo.
@@ -256,6 +307,9 @@ app.once('browser-window-created', (_event, window) => {
         await sendFixture(syntheticTelemetry(2026, 6, { session: 18446744073709551615n, overallFrame: 1, speed: 301, gear: 8 }))
         await waitForUi(window, `${metricEquals('speed', 301)} && ${metricEquals('gear', 8)} && ${metricEquals('lap', '—')}`)
         await waitForUi(window, metricEquals('session-context', 'Aguardando contexto da sessão'))
+        await waitForUi(window, `${metricEquals('tyre-age', '—')} && ${metricEquals('tyre-frontLeft', '—')}`)
+        await sendFixture(syntheticTyres(2026, 7, { session: 18446744073709551615n, overallFrame: 0 }))
+        await sendFixture(syntheticTyres(2026, 10, { session: 18446744073709551615n, overallFrame: 0 }))
         await sendFixture(syntheticSession(2026, { session: 18446744073709551615n, overallFrame: 0, sessionType: 15, sessionLink: 31 }))
         await waitForUi(window, metricEquals('session-context', 'Corrida · Brasil'))
         await sendFixture(syntheticTelemetry(2026, 2, { session: 18446744073709551615n, overallFrame: 0, lap: 3 }))
@@ -301,12 +355,23 @@ app.once('browser-window-created', (_event, window) => {
         const afterReloadReal = await readReal()
         assert.deepEqual(afterReloadReal.identity, beforeReloadReal.identity)
         assert.deepEqual(afterReloadReal.context, beforeReloadReal.context)
+        assert.deepEqual(afterReloadReal.tyreStatus, beforeReloadReal.tyreStatus)
+        assert.deepEqual(afterReloadReal.tyreWear, beforeReloadReal.tyreWear)
         assert.equal(afterReloadReal.identityRevision, beforeReloadReal.identityRevision)
         await waitForUi(window, metricEquals('session-context', 'Corrida · Brasil'))
         await waitForUi(window, `document.querySelector('[data-testid="source-status"]').textContent === 'Dados desatualizados'`)
         await waitForUi(window, `${metricEquals('speed', '—')} && ${metricEquals('gear', '—')} && ${metricEquals('lap', '—')}`)
         await waitForUi(window, `document.querySelector('[data-testid="udp-status"]').textContent.includes('Sem datagramas')`)
         await waitForUi(window, metricEquals('session-context', 'Contexto da sessão indisponível'))
+        await waitForUi(window, `${metricEquals('tyre-age', '—')} && ${metricEquals('tyre-frontLeft', '—')}`)
+        await sendFixture(syntheticTyres(2026, 7, { session: 18446744073709551615n, overallFrame: 0 }))
+        await sendFixture(syntheticTyres(2026, 10, { session: 18446744073709551615n, overallFrame: 0 }))
+        await waitForUi(window, metricEquals('udp-packets', sentFixtures))
+        assert.equal(await window.webContents.executeJavaScript(metricEquals('tyre-age', '—')), true)
+        await sendFixture(syntheticTyres(2026, 7, { session: 18446744073709551615n, overallFrame: 1, actual: 255, visual: 254, age: 0 }))
+        await waitForUi(window, `${metricEquals('tyre-actual', 'Desconhecido (255)')} && ${metricEquals('tyre-visual', 'Desconhecido (254)')} && ${metricEquals('tyre-age', 0)} && ${metricEquals('tyre-frontLeft', '—')}`)
+        await sendFixture(syntheticTyres(2026, 10, { session: 18446744073709551615n, overallFrame: 1, wear: [0, 100, 1.5, 2.5] }))
+        await waitForUi(window, `${metricEquals('tyre-frontLeft', '1,5%')} && ${metricEquals('tyre-rearRight', '100%')}`)
         await sendFixture(syntheticSession(2026, { session: 18446744073709551615n, overallFrame: 1, sessionType: 15, sessionLink: 31 }))
         // Uma duplicação após silêncio mantém os dados vencidos.
         await sendFixture(syntheticTelemetry(2026, 6, { session: 18446744073709551615n, overallFrame: 1, speed: 301, gear: 8 }))
@@ -336,6 +401,8 @@ app.once('browser-window-created', (_event, window) => {
           assert.equal(current.context.sessionLinkIdentifier, 32)
           assert.equal(current.motion, null)
           assert.equal(current.lap, null)
+          assert.equal(current.tyreStatus, null)
+          assert.equal(current.tyreWear, null)
         }
         // Rajada do UID aposentado não restaura o contexto anterior após retomada.
         for (const overallFrame of [2, 3]) await sendFixture(syntheticSession(2026, { session: 456n, overallFrame, sessionType: 1 }))
@@ -345,6 +412,17 @@ app.once('browser-window-created', (_event, window) => {
         await waitForUi(window, metricEquals('session-context', 'Sessão desconhecida · Circuito desconhecido'))
         await sendFixture(syntheticSession(2026, { session: 789n, overallFrame: 3, sessionType: 14, trackId: 42, weekendLink: 21, sessionLink: 32 }))
         await waitForUi(window, metricEquals('session-context', 'Classificação sprint de volta única · Madrid'))
+        await sendFixture(syntheticTyres(2026, 7, { session: 789n }))
+        await sendFixture(syntheticTyres(2026, 10, { session: 789n }))
+        await waitForUi(window, metricEquals('tyre-frontLeft', '33,8%'))
+        // Receber ID 10 novo não renova composto/idade do ID 7.
+        await delay(1500)
+        await sendFixture(syntheticTyres(2026, 10, { session: 789n, overallFrame: 201 }))
+        await waitForUi(window, metricEquals('tyre-age', '—'))
+        assert.equal(await window.webContents.executeJavaScript(metricEquals('tyre-frontLeft', '33,8%')), true)
+        assert.equal(await window.webContents.executeJavaScript(metricEquals('tyre-availability', 'Composto/idade: dados desatualizados · Desgaste: disponível')), true)
+        await sendFixture(syntheticTyres(2026, 7, { session: 789n, overallFrame: 201 }))
+        await waitForUi(window, metricEquals('tyre-age', 8))
       }
       const screenshot = await capturePage(window, 'tamanho inicial')
       await writeFile(join(app.getPath('userData'), `udp-${udpMode}.png`), screenshot.toPNG())
@@ -355,8 +433,30 @@ app.once('browser-window-created', (_event, window) => {
       const viewport = await window.webContents.executeJavaScript('({ width: innerWidth, height: innerHeight })')
       assert.deepEqual(minimumScreenshot.getSize(), viewport)
       await writeFile(join(app.getPath('userData'), `udp-${udpMode}-minimum.png`), minimumScreenshot.toPNG())
+      if (udpMode === 'receive') {
+        // O painel fica abaixo dos indicadores: verificar também a região após rolagem.
+        for (const [width, height, label] of [[980, 660, 'initial'], [640, 500, 'minimum']]) {
+          window.setSize(width, height)
+          await waitForUi(window, width > 720 ? 'window.innerWidth > 720' : 'window.innerWidth <= 640')
+          const overallFrame = label === 'initial' ? 300 : 301
+          await sendFixture(syntheticTyres(2026, 7, { session: 789n, overallFrame, actual: 255, visual: 254 }))
+          await sendFixture(syntheticTyres(2026, 10, { session: 789n, overallFrame }))
+          await waitForUi(window, metricEquals('tyre-actual', 'Desconhecido (255)'))
+          await window.webContents.executeJavaScript('document.querySelector(\'[data-testid="tyre-panel"]\').scrollIntoView({ block: "center" })')
+          const tyresScreenshot = await capturePage(window, `painel pneus ${label}`)
+          assert.equal(await window.webContents.executeJavaScript(`(() => {
+            const panel = document.querySelector('[data-testid="tyre-panel"]');
+            const bounds = panel.getBoundingClientRect();
+            return bounds.top >= 0 && bounds.bottom <= innerHeight &&
+              document.documentElement.scrollWidth <= innerWidth &&
+              [...panel.querySelectorAll('dd')].every(field => field.scrollWidth <= field.clientWidth);
+          })()`), true)
+          await writeFile(join(app.getPath('userData'), `tyres-${label}.png`), tyresScreenshot.toPNG())
+        }
+      }
       await selectMode(window, 'simulated')
       await waitForUi(window, `document.querySelector('[data-testid="source-status"]').textContent === 'Fonte ativa'`)
+      assert.equal(await window.webContents.executeJavaScript('document.querySelector(\'[data-testid="tyre-panel"]\') === null'), true)
       assert.equal(await window.webContents.executeJavaScript('document.querySelector(\'[data-testid="session-context"]\') === null'), true)
       assert.deepEqual(errors, [])
 

@@ -1,4 +1,4 @@
-# Referência de protocolo — V0.2C-B
+# Referência de protocolo — V0.3A
 
 Cabeçalhos consultados em 13/11/2026; estruturas de telemetria, volta e Session Data, semântica temporal e apêndices consultados em 14/11/2026 nos anexos TXT/PDF. Implementação de contexto concluída em 15/11/2026. Fontes primárias da EA:
 
@@ -31,7 +31,7 @@ Nos dois formatos, a EA define `sessionUID` como identificador único de sessão
 
 Essas definições não garantem entrega/ordem UDP, autenticidade, frequência de avanço, tratamento de empates ou comportamento de overflow. A comparação modular e a confirmação de identidade abaixo são políticas locais defensivas, não garantias adicionais da EA.
 
-IDs documentados: 0–15 em 2025; 0–16 em 2026. A V0.2C-B decodifica campos mínimos dos IDs 1 (Session Data), 2 (Lap Data) e 6 (Car Telemetry). ID 16 não é decodificado.
+IDs documentados: 0–15 em 2025; 0–16 em 2026. A V0.3A decodifica campos mínimos dos IDs 1 (Session Data), 2 (Lap Data), 6 (Car Telemetry), 7 (Car Status) e 10 (Car Damage). ID 16 não é decodificado.
 
 ## Política de inspeção de cabeçalho (preservada da V0.2A)
 
@@ -91,13 +91,50 @@ Tipos reconhecidos: IDs 1–18 dos apêndices (TL1–3, treino curto, classifica
 
 Os três vínculos são uint32 opacos, documentados pela EA como persistentes entre saves. Zero torna-se `null` por decisão defensiva local, pois a documentação não o qualifica como vínculo confiável. Valores não zero são preservados sem inferir unicidade global, cronologia ou autenticidade. `sessionUID` permanece separado e exato; o valor técnico zero pode ser observado como na V0.2C-A, mas não comprova identidade confiável nem relação lógica. Desconhecidos não invalidam os demais campos interpretáveis. Campos fora do escopo não são validados semanticamente; diagnóstico de cabeçalho reconhecido continua sem garantir validade do payload completo.
 
+## Pneus — V0.3A
+
+Estruturas dos IDs 7/10 consultadas separadamente nos dois TXT oficiais em **15/11/2026**. Os PDFs confirmam **packetVersion 1**, ID 7 na página 11 e ID 10 na página 13 de ambos (numeração humana); a versão documental 1.1 de 2026 não é a versão do pacote. A frequência nominal é a selecionada no menu para ID 7 e 10 Hz para ID 10.
+
+| Formato | Carros | Stride ID 7 | Total ID 7 | Stride ID 10 | Total ID 10 |
+| --- | --- | --- | --- | --- | --- |
+| 2025 | 22 | 55 | 1239 | 46 | 1041 |
+| 2026 | 24 | 59 | 1445 | 46 | 1133 |
+
+Em `CarStatusData`, antes dos compostos há cinco uint8, três float, dois uint16, dois uint8 e um uint16: `5 + 12 + 4 + 2 + 2 = 25` bytes. Seguem composto real, visual e idade (3), flag FIA (1), duas potências (8), energia armazenada (4), modo ERS (1), energias por volta (12 em 2025, 16 em 2026) e pausa de rede (1). Soma: **55/59**. A diferença é `m_ersHarvestLimitPerLap`, float adicional em 2026; nenhum campo de ERS é decodificado nesta etapa. `CarDamageData` soma quatro float de desgaste (16), três arrays de quatro uint8 (12) e dezoito uint8 restantes (18): **46**, conferido nos dois formatos. Não há trailer nesses pacotes: total = `29 + carros × stride`.
+
+Para `i = playerCarIndex`, base do carro `B = 29 + i × stride`:
+
+| ID | Campo | Tipo | Offset no carro | Offset absoluto |
+| --- | --- | --- | --- | --- |
+| 7 | m_actualTyreCompound | uint8 | 25 | B + 25 |
+| 7 | m_visualTyreCompound | uint8 | 26 | B + 26 |
+| 7 | m_tyresAgeLaps | uint8 | 27 | B + 27 |
+| 10 | m_tyresWear[0..3] | float32 LE × 4 | 0, 4, 8, 12 | B + 0/4/8/12 |
+
+`decodeTyres` valida formato, ID, versão, tamanho exato, tempo de sessão finito e índice (0–21/0–23) antes dessas leituras. Não infere formato pelo `gameYear`. O cabeçalho fornece identidade e timing nos offsets já documentados. Apenas o carro primário é selecionado. Campos fora do escopo não são validados semanticamente.
+
+### Rodas, compostos e valores inválidos
+
+A nota da EA sobre todos os arrays de rodas, junto a Motion Ex (PDF 2025 p. 15; 2026 p. 16), define **RL, RR, FL, FR**. O mapeamento explícito no contrato é:
+
+| Índice UDP | Offset no carro | Propriedade Shared | Posição exibida |
+| --- | --- | --- | --- |
+| 0 | 0 | rearLeft | TE — traseiro esquerdo |
+| 1 | 4 | rearRight | TD — traseiro direito |
+| 2 | 8 | frontLeft | FE — dianteiro esquerdo |
+| 3 | 12 | frontRight | FD — dianteiro direito |
+
+A interface ordena **FE, FD, TE, TD**. Desgaste é percentual direto, sem multiplicar por 100 nem subtrair de 100. Não representa dano estrutural, temperatura ou aderência. Política local: uma roda com NaN, infinito ou percentual fora de **[0, 100]** rejeita o grupo inteiro daquele datagrama. Não se limita artificialmente o valor nem se renova frescor; uma amostra anterior aceita pode continuar visível até seu vencimento original. Zero, 100 e frações são válidos; o snapshot preserva o float lido e apenas a apresentação arredonda para até uma casa decimal.
+
+Compostos reais modernos: **16=C5, 17=C4, 18=C3, 19=C2, 20=C1, 21=C0, 22=C6, 7=intermediário, 8=chuva**. Visuais: **16=macio, 17=médio, 18=duro, 7=intermediário, 8=chuva**. As tabelas coincidem nos dois anexos, mas são independentes entre real e visual. Os códigos originais uint8 permanecem no snapshot; fora dessas tabelas, inclusive códigos de outras categorias, o rótulo é `Desconhecido (código)`. Não se deduz visual de composto físico. A idade aceita todo uint8, inclusive zero; não há sentinela adicional documentada nem teto de voltas inventado.
+
 ## Sessão, publicação e frescor
 
 `RealTelemetrySource` consome os datagramas do socket existente, somente no Main. A identidade reúne formato, índice do jogador e `sessionUID` (uint64 lido como BigInt e convertido diretamente para string decimal, sem passar por number). Pacotes desconhecidos/rejeitados não mudam identidade nem renovam frescor.
 
 ### Ordem por grupo
 
-Velocidade/marcha, volta e contexto guardam seus próprios contadores, tempos de sessão e instantes locais de recepção. O primeiro pacote de cada grupo na identidade ativa é aceito. Depois, somente um `overallFrameId` considerado mais novo substitui esse grupo. Não se comparam os frames entre IDs 1/2/6, nem entre identidades. Frequências e ordens diferentes continuam permitidas. A ausência do ID 1 não impede as métricas.
+Velocidade/marcha, volta, contexto, composto/idade e desgaste guardam seus próprios contadores, tempos de sessão e instantes locais de recepção. O primeiro pacote de cada grupo na identidade ativa é aceito. Depois, somente um `overallFrameId` considerado mais novo substitui esse grupo. Não se comparam os frames entre IDs 1/2/6/7/10, nem entre identidades. Frequências e ordens diferentes continuam permitidas. Contexto e pneus ausentes não impedem as métricas anteriores.
 
 A distância é `(novo - anterior) >>> 0`: o operador JavaScript converte a diferença para uint32, implementando módulo 2³². Distância entre 1 e 2³¹−1 é aceita; zero é duplicação e mantém a primeira amostra, inclusive se o payload divergir; exatamente 2³¹ é ambíguo e é rejeitado; distância maior é tratada como atraso. Isso permite `0xffffffff → 0` e rejeita um pacote pré-wrap atrasado. A regra pressupõe distância real inferior a meia faixa: não resolve saltos maiores, resets inesperados do contador na mesma identidade ou voltas completas sem observação. Não usamos tempo local para adivinhar a ordem desses casos.
 
@@ -106,9 +143,9 @@ A distância é `(novo - anterior) >>> 0`: o operador JavaScript converte a dife
 ### Confirmação e troca de identidade
 
 1. Sem identidade ativa (início ou reinício), o primeiro pacote decodificado válido assume imediatamente.
-2. Identidade diferente fica candidata, com no máximo uma amostra por grupo e sem publicação. É necessário observar **dois pacotes do mesmo grupo com avanço do contador geral**, dentro de **1000 ms** desde o primeiro pacote candidato. Qualquer um dos IDs 1/2/6 pode confirmar sozinho. Duplicações, atrasos e ambiguidade não confirmam nem estendem essa janela. No limite exato, uma nova candidatura começa. Contradições entre campos conhecidos de contexto da candidata descartam essa candidatura; uma sequência posterior pode iniciar outra.
+2. Identidade diferente fica candidata, com no máximo uma amostra por grupo e sem publicação. É necessário observar **dois pacotes do mesmo grupo com avanço do contador geral**, dentro de **1000 ms** desde o primeiro pacote candidato. Qualquer um dos IDs 1/2/6/7/10 pode confirmar sozinho. Duplicações, atrasos e ambiguidade não confirmam nem estendem essa janela. No limite exato, uma nova candidatura começa. Contradições entre campos conhecidos de contexto da candidata descartam essa candidatura; uma sequência posterior pode iniciar outra.
 3. Uma amostra aceita da identidade ativa cancela a candidatura. Uma terceira identidade substitui a candidata. Pacotes rejeitados pelo parser ou de UIDs bloqueados não participam. Apenas tráfego descartado da identidade ativa não cancela a candidatura.
-4. Confirmada a candidata, os três grupos ativos e referências de contexto anteriores são limpos antes de aplicar suas amostras, preservando os instantes originais de recepção e referências conhecidas da candidata. Nenhum valor antigo é combinado com a nova identidade; a publicação só ocorre após essa transição síncrona. `identityRevision` incrementa em cada troca técnica confirmada, inclusive formato/carro; não é um contador de fins de semana.
+4. Confirmada a candidata, os cinco grupos ativos e referências de contexto anteriores são limpos antes de aplicar suas amostras, preservando os instantes originais de recepção e referências conhecidas da candidata. Nenhum valor antigo é combinado com a nova identidade; a publicação só ocorre após essa transição síncrona. `identityRevision` incrementa em cada troca técnica confirmada, inclusive formato/carro; não é um contador de fins de semana.
 5. Quando muda o UID, o UID anterior entra em uma fila limitada aos **8 últimos UIDs substituídos**, em memória. Qualquer pacote desses UIDs é ignorado pela fonte real, inclusive após silêncio. Trocar apenas formato/carro não aposenta o UID: é possível alternar 2025 → 2026 → 2025 ou mudar de jogador e voltar, sempre com confirmação.
 
 Os limiares são escolhas locais, não parâmetros prescritos pela EA. A confirmação reduz troca por pacote isolado, e a fila bloqueia inclusive rajadas de sessões recentemente substituídas. Isso não autentica uma sessão nova: uma rajada coerente de identidade desconhecida, de formato/carro anterior sob o mesmo UID, ou de UID já removido da fila ainda pode assumir. A primeira identidade após início também pode vir de pacote atrasado. Reutilizar um UID ainda retido (por exemplo, se uma retomada de save fizer isso) é bloqueado até sua remoção da fila ou reinício do receptor/fonte; esse comportamento do jogo ainda exige validação. Não há timeout que apague essa proteção em silêncio nem histórico persistente.
@@ -138,6 +175,10 @@ Estados dos grupos de métricas: `waiting` (nunca recebido nesta identidade), `f
 
 O início/reinício, erro ou parada do receptor invalida os dados e limpa candidatura, referências de ordem e fila de UIDs. Encerrar a fonte cancela as duas inscrições e o timer. Cancelamentos individuais são idempotentes. Silêncio/diagnóstico `idle`, expiração, pausa e Alt+Tab não limpam identidade nem referências de ordem. A retomada aceita a próxima amostra com avanço em cada grupo. Se o jogo enviar somente o mesmo contador durante uma pausa, as métricas vencem mesmo com tráfego no diagnóstico; chegada recente não comprova medição nova. Silêncio UDP não significa pausa, e tempo local não produz progresso de corrida. Recarregar o Renderer mantém estado e socket; o Preload instala o listener antes de solicitar o snapshot, com remetente/frame validados no Main.
 
+Os pneus publicam `tyreStatus`/`tyreWear` e seus estados `tyreStatusFreshness`/`tyreWearFreshness`, usando `waiting`, `fresh` e `stale`. Cada grupo tem expiração independente de 3000 ms; campos ausentes/vencidos são `null`. O estado geral existente continua descrevendo apenas velocidade/marcha e volta. O painel de pneus descreve sua própria disponibilidade. Contexto ausente ou contraditório não bloqueia os grupos de pneus na mesma identidade técnica. A memória continua limitada: cinco grupos ativos, até cinco pacotes candidatos decodificados e a proteção existente de oito UIDs; sem reter datagramas.
+
+Idade e desgaste podem diminuir com avanço do contador geral, tanto em flashbacks quanto em trocas de pneus. Não há monotonicidade imposta aos valores nem inferência automática de pit stop/stint. Durante uma transição, grupos frescos da mesma identidade podem momentaneamente representar instantes diferentes; a entrega não implementa sincronização entre pacotes nem reconciliação completa de flashbacks.
+
 ## Fixtures
 
 `tests/fixtures/f1-header.ts` constrói cabeçalhos sintéticos com esses offsets, sessão fictícia 123, versão de pacote 1, tempo 10,5 e frame 100. O smoke test constrói uma fixture equivalente de formato 2026/ID 16. Não representam payloads completos nem capturas reais. Variantes curtas, IDs inválidos e números não finitos exercitam a rejeição segura.
@@ -145,3 +186,5 @@ O início/reinício, erro ou parada do receptor invalida os dados e limpa candid
 `tests/fixtures/f1-telemetry.ts` e o smoke constroem também pacotes completos IDs 2/6, com comprimentos, strides e offsets acima. Frame comum e contador geral são configuráveis independentemente, inclusive para flashbacks e wraparound sintéticos. Carros não selecionados recebem valores distintos, incluindo testes no último índice. Os construtores não importam constantes do parser, para detectar divergências. Campos fora do escopo são sintéticos, em geral zerados. Nenhuma fixture é evidência de comparação com o HUD real. Resultados e roteiro manual da política temporal: [Validação V0.2C-A](validation-v0.2c-a.md).
 
 `tests/fixtures/f1-session.ts` e o smoke acrescentam ID 1 completo nos dois formatos, sem importar offsets do decoder. Os testes cobrem vínculos e desconhecidos, truncamentos, conflitos, transições e preservação de referências da candidata, ordem, flashbacks, silêncio, retomadas, ausência de contexto, ciclos de vida e socket único. Evidências e roteiro manual: [Validação V0.2C-B](validation-v0.2c-b.md).
+
+`tests/fixtures/f1-tyres.ts` e o smoke constroem IDs 7/10 completos para ambos os formatos sem importar constantes do parser. As rodas têm valores distintos, inclusive do array de dano, e os demais carros têm outros valores. Os testes incluem limites, desconhecidos, último índice, truncamentos, ordem, trocas de pneus, identidade, expiração independente e recursos. Resultados e roteiro manual: [Validação V0.3A](validation-v0.3a.md). Nenhuma dessas fixtures é captura do jogo real.

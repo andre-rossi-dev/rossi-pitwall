@@ -5,6 +5,7 @@ import { UdpReceiver, DIAGNOSTIC_INTERVAL_MS, UDP_IDLE_MS } from '../src/main/ud
 import { syntheticHeader } from './fixtures/f1-header'
 import { syntheticTelemetry } from './fixtures/f1-telemetry'
 import { syntheticSession } from './fixtures/f1-session'
+import { syntheticTyres } from './fixtures/f1-tyres'
 import { RealTelemetrySource } from '../src/main/telemetry/RealTelemetrySource'
 
 const { createdSockets } = vi.hoisted(() => ({ createdSockets: [] as Socket[] }))
@@ -69,6 +70,31 @@ afterEach(async () => {
 })
 
 describe('UdpReceiver com sockets UDP locais e fixtures sintéticas', () => {
+  it.each([2025, 2026] as const)('recebe pneus %i no socket existente e encerra sem novas emissões', async (format) => {
+    const udp = receiver()
+    const real = new RealTelemetrySource(udp)
+    real.start()
+    try {
+      await udp.start()
+      const client = sender()
+      const player = format === 2025 ? 21 : 23
+      await send(client, udp, syntheticTyres(7, { format, player }))
+      await send(client, udp, syntheticTyres(10, { format, player }))
+      expect(createdSockets).toHaveLength(2) // Receptor único e remetente sintético.
+      expect(real.getSnapshot()).toMatchObject({
+        tyreStatus: { actualCompound: 18, visualCompound: 16, ageLaps: 8 },
+        tyreWear: { frontLeft: 33.75, frontRight: 44, rearLeft: 11.25, rearRight: 22.5 }
+      })
+      const callback = vi.fn()
+      const cancel = real.subscribe(callback)
+      cancel()
+      callback.mockClear()
+      await udp.stop()
+      expect(createdSockets[0]!.eventNames()).toEqual([])
+      expect(real.getSnapshot()).toMatchObject({ tyreStatus: null, tyreWear: null })
+      expect(callback).not.toHaveBeenCalled()
+    } finally { real.stop() }
+  })
   it('alimenta telemetria e diagnóstico pelo mesmo socket com cancelamentos independentes', async () => {
     const udp = receiver()
     const real = new RealTelemetrySource(udp)

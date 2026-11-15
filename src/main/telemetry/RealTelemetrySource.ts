@@ -8,6 +8,9 @@ import { decodeTelemetry } from '../udp/decodeTelemetry'
 import type { DecodedTelemetry } from '../udp/decodeTelemetry'
 import { decodeSession } from '../udp/decodeSession'
 import type { DecodedSession } from '../udp/decodeSession'
+import { decodeTyres } from '../udp/decodeTyres'
+import type { DecodedTyres } from '../udp/decodeTyres'
+import type { RealTyreStatus, RealTyreWear } from '../../shared/tyres'
 import type { SessionContext, SessionDetails, SessionContextStatus } from '../../shared/sessionContext'
 
 export const REAL_TELEMETRY_INTERVAL_MS = 100
@@ -16,7 +19,7 @@ export const IDENTITY_CONFIRMATION_MS = 1000
 export const RETIRED_SESSION_LIMIT = 8
 
 interface Received<T> { readonly data: T; readonly at: number }
-type DecodedPacket = DecodedTelemetry | DecodedSession
+type DecodedPacket = DecodedTelemetry | DecodedSession | DecodedTyres
 const contextFields = [
   'sessionType', 'trackId', 'seasonLinkIdentifier', 'weekendLinkIdentifier', 'sessionLinkIdentifier'
 ] as const
@@ -63,6 +66,8 @@ export class RealTelemetrySource implements Source {
   private identity: RealTelemetryIdentity | null = null
   private motion: Received<RealMotion> | null = null
   private lap: Received<RealLap> | null = null
+  private tyreStatus: Received<RealTyreStatus> | null = null
+  private tyreWear: Received<RealTyreWear> | null = null
   private context: Received<SessionContext> | null = null
   private contextBinding: SessionDetails | null = null
   private contextConflict = false
@@ -116,6 +121,8 @@ export class RealTelemetrySource implements Source {
       received === null ? 'waiting' : now - received.at >= REAL_TELEMETRY_STALE_MS ? 'stale' : 'fresh'
     const motionFreshness = freshness(this.motion)
     const lapFreshness = freshness(this.lap)
+    const tyreStatusFreshness = freshness(this.tyreStatus)
+    const tyreWearFreshness = freshness(this.tyreWear)
     const contextFreshness = freshness(this.context)
     const contextStatus: SessionContextStatus = this.contextConflict || contextFreshness === 'stale'
       ? 'unavailable' : this.context && contextFields.some((field) => this.context!.data[field] !== null)
@@ -126,6 +133,9 @@ export class RealTelemetrySource implements Source {
     return Object.freeze({
       origin: 'udp', status, identity: this.identity, motionFreshness, lapFreshness,
       identityRevision: this.identityRevision, contextStatus,
+      tyreStatusFreshness, tyreWearFreshness,
+      tyreStatus: tyreStatusFreshness === 'fresh' ? this.tyreStatus!.data : null,
+      tyreWear: tyreWearFreshness === 'fresh' ? this.tyreWear!.data : null,
       context: contextStatus === 'identified' ? this.context!.data : null,
       motion: motionFreshness === 'fresh' ? this.motion!.data : null,
       lap: lapFreshness === 'fresh' ? this.lap!.data : null
@@ -133,7 +143,7 @@ export class RealTelemetrySource implements Source {
   }
 
   private readonly receive = (datagram: Buffer): void => {
-    const packet = decodeTelemetry(datagram) ?? decodeSession(datagram)
+    const packet = decodeTelemetry(datagram) ?? decodeSession(datagram) ?? decodeTyres(datagram)
     if (!packet) return
     if (this.retiredSessions.includes(packet.sessionId)) return
     const at = this.now()
@@ -158,8 +168,8 @@ export class RealTelemetrySource implements Source {
         candidate.contextBinding = retainKnownContext(candidate.contextBinding, packet.data)
       }
       candidate.packets[packet.kind] = { data: packet, at }
-      // Confirma somente com avanço no MESMO grupo; IDs 1, 2 e 6 não precisam
-      // compartilhar frames, frequência ou sequer estar ambos disponíveis.
+      // Confirma somente com avanço no MESMO grupo; IDs 1, 2, 6, 7 e 10 não
+      // precisam compartilhar frames, frequência ou estar todos disponíveis.
       if (!previous) return
       if (this.identity.sessionId !== identity.sessionId) {
         this.retiredSessions.push(this.identity.sessionId)
@@ -168,6 +178,8 @@ export class RealTelemetrySource implements Source {
       this.identity = identity
       this.motion = null
       this.lap = null
+      this.tyreStatus = null
+      this.tyreWear = null
       this.context = null
       this.contextBinding = candidate.contextBinding
       this.contextConflict = false
@@ -176,7 +188,7 @@ export class RealTelemetrySource implements Source {
       for (const received of Object.values(candidate.packets)) this.apply(received.data, received.at)
       return
     }
-    const previous = packet.kind === 'motion' ? this.motion : packet.kind === 'lap' ? this.lap : this.context
+    const previous = this.previousGroup(packet.kind)
     if (previous && !isNewerFrame(packet.data.overallFrameId, previous.data.overallFrameId)) return
     this.candidate = null
     this.apply(packet, at)
@@ -185,6 +197,8 @@ export class RealTelemetrySource implements Source {
   private apply(packet: DecodedPacket, at: number): void {
     if (packet.kind === 'motion') this.motion = { data: Object.freeze(packet.data), at }
     else if (packet.kind === 'lap') this.lap = { data: Object.freeze(packet.data), at }
+    else if (packet.kind === 'tyreStatus') this.tyreStatus = { data: Object.freeze(packet.data), at }
+    else if (packet.kind === 'tyreWear') this.tyreWear = { data: Object.freeze(packet.data), at }
     else {
       const previous = this.contextBinding
       if (previous && conflictingContext(previous, packet.data)) this.contextConflict = true
@@ -200,6 +214,8 @@ export class RealTelemetrySource implements Source {
     this.identity = null
     this.motion = null
     this.lap = null
+    this.tyreStatus = null
+    this.tyreWear = null
     this.context = null
     this.contextBinding = null
     this.contextConflict = false
@@ -213,6 +229,8 @@ export class RealTelemetrySource implements Source {
     const snapshot = this.getSnapshot()
     if (this.dirty || snapshot.motionFreshness !== this.published?.motionFreshness ||
         snapshot.lapFreshness !== this.published?.lapFreshness ||
+        snapshot.tyreStatusFreshness !== this.published?.tyreStatusFreshness ||
+        snapshot.tyreWearFreshness !== this.published?.tyreWearFreshness ||
         snapshot.contextStatus !== this.published?.contextStatus) this.publish(snapshot)
   }
 
@@ -220,5 +238,15 @@ export class RealTelemetrySource implements Source {
     this.dirty = false
     this.published = snapshot
     this.listeners.forEach((listener) => listener(snapshot))
+  }
+
+  private previousGroup(kind: DecodedPacket['kind']) {
+    switch (kind) {
+      case 'motion': return this.motion
+      case 'lap': return this.lap
+      case 'session': return this.context
+      case 'tyreStatus': return this.tyreStatus
+      case 'tyreWear': return this.tyreWear
+    }
   }
 }

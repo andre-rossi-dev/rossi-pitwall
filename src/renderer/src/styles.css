@@ -44,6 +44,17 @@ dd small { font-size: 14px; font-weight: 400; color: #a4a9b3; letter-spacing: 0;
 .udp-diagnostics p { margin: 6px 0 0; }
 .udp-error { color: #ff9699; }
 
+.tyre-panel { margin-top: 18px; padding: 18px 20px; background: #16191f; border: 1px solid #2b3039; border-left: 3px solid #ed4048; border-radius: 8px; }
+.tyre-panel h2 { font-size: 13px; letter-spacing: 1px; }
+.tyre-availability, .tyre-caption { font-size: 11px; color: #a4a9b3; line-height: 1.5; }
+.tyre-details, .tyre-wheels { display: grid; gap: 12px; margin: 14px 0 0; }
+.tyre-details { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.tyre-wheels { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 8px; }
+.tyre-panel dt { font-size: 10px; letter-spacing: .5px; }
+.tyre-panel dd { font-size: 18px; letter-spacing: 0; margin-top: 6px; overflow-wrap: anywhere; }
+.tyre-caption { margin: 16px 0 0; }
+.tyre-wheels abbr { text-decoration: none; }
+
 @media (max-width: 720px) {
   .pitwall { padding: 28px 22px; }
   .header { margin-bottom: 30px; }
