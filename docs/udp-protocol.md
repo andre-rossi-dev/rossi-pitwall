@@ -1,4 +1,4 @@
-# Referência de protocolo — V0.3A
+# Referência de protocolo — V0.3B
 
 Cabeçalhos consultados em 13/11/2026; estruturas de telemetria, volta e Session Data, semântica temporal e apêndices consultados em 14/11/2026 nos anexos TXT/PDF. Implementação de contexto concluída em 15/11/2026. Fontes primárias da EA:
 
@@ -31,7 +31,7 @@ Nos dois formatos, a EA define `sessionUID` como identificador único de sessão
 
 Essas definições não garantem entrega/ordem UDP, autenticidade, frequência de avanço, tratamento de empates ou comportamento de overflow. A comparação modular e a confirmação de identidade abaixo são políticas locais defensivas, não garantias adicionais da EA.
 
-IDs documentados: 0–15 em 2025; 0–16 em 2026. A V0.3A decodifica campos mínimos dos IDs 1 (Session Data), 2 (Lap Data), 6 (Car Telemetry), 7 (Car Status) e 10 (Car Damage). ID 16 não é decodificado.
+IDs documentados: 0–15 em 2025; 0–16 em 2026. A V0.3B decodifica campos mínimos dos IDs 1 (Session Data), 2 (Lap Data), 6 (Car Telemetry), 7 (Car Status: pneus/combustível/ERS) e 10 (Car Damage). ID 16 não é decodificado.
 
 ## Política de inspeção de cabeçalho (preservada da V0.2A)
 
@@ -100,7 +100,7 @@ Estruturas dos IDs 7/10 consultadas separadamente nos dois TXT oficiais em **15/
 | 2025 | 22 | 55 | 1239 | 46 | 1041 |
 | 2026 | 24 | 59 | 1445 | 46 | 1133 |
 
-Em `CarStatusData`, antes dos compostos há cinco uint8, três float, dois uint16, dois uint8 e um uint16: `5 + 12 + 4 + 2 + 2 = 25` bytes. Seguem composto real, visual e idade (3), flag FIA (1), duas potências (8), energia armazenada (4), modo ERS (1), energias por volta (12 em 2025, 16 em 2026) e pausa de rede (1). Soma: **55/59**. A diferença é `m_ersHarvestLimitPerLap`, float adicional em 2026; nenhum campo de ERS é decodificado nesta etapa. `CarDamageData` soma quatro float de desgaste (16), três arrays de quatro uint8 (12) e dezoito uint8 restantes (18): **46**, conferido nos dois formatos. Não há trailer nesses pacotes: total = `29 + carros × stride`.
+Em `CarStatusData`, antes dos compostos há cinco uint8, três float, dois uint16, dois uint8 e um uint16: `5 + 12 + 4 + 2 + 2 = 25` bytes. Seguem composto real, visual e idade (3), flag FIA (1), duas potências (8), energia armazenada (4), modo ERS (1), energias por volta (12 em 2025, 16 em 2026) e pausa de rede (1). Soma: **55/59**. A diferença é `m_ersHarvestLimitPerLap`, float adicional em 2026; a decodificação energética foi acrescentada na V0.3B, abaixo. `CarDamageData` soma quatro float de desgaste (16), três arrays de quatro uint8 (12) e dezoito uint8 restantes (18): **46**, conferido nos dois formatos. Não há trailer nesses pacotes: total = `29 + carros × stride`.
 
 Para `i = playerCarIndex`, base do carro `B = 29 + i × stride`:
 
@@ -128,13 +128,55 @@ A interface ordena **FE, FD, TE, TD**. Desgaste é percentual direto, sem multip
 
 Compostos reais modernos: **16=C5, 17=C4, 18=C3, 19=C2, 20=C1, 21=C0, 22=C6, 7=intermediário, 8=chuva**. Visuais: **16=macio, 17=médio, 18=duro, 7=intermediário, 8=chuva**. As tabelas coincidem nos dois anexos, mas são independentes entre real e visual. Os códigos originais uint8 permanecem no snapshot; fora dessas tabelas, inclusive códigos de outras categorias, o rótulo é `Desconhecido (código)`. Não se deduz visual de composto físico. A idade aceita todo uint8, inclusive zero; não há sentinela adicional documentada nem teto de voltas inventado.
 
+## Combustível e ERS — V0.3B
+
+ID 7 reconferido em **15/11/2026** nos dois TXT e PDFs EA ligados no início deste documento. Os PDFs, página 11 (numeração humana), confirmam **packetVersion 1** e totais 1239/1445 bytes; o bloco 2026 continua na página 12. A versão documental **1.1** de 2026 registra a mudança do nome do modo 3. Não é a versão do pacote.
+
+Layout packed little-endian, base `B = 29 + playerCarIndex × stride`, sem trailer:
+
+| Formato | Carros / índices | Stride | Comprimento exato ID 7 |
+| --- | --- | --- | --- |
+| 2025 | 22 / 0–21 | 55 | 29 + 22 × 55 = **1239** |
+| 2026 | 24 / 0–23 | 59 | 29 + 24 × 59 = **1445** |
+
+| Campo EA | Tipo | Offset 2025 no carro | Offset 2026 no carro | Propriedade no snapshot |
+| --- | --- | --- | --- | --- |
+| m_fuelInTank | float32 | 5 | 5 | fuel.inTank |
+| m_fuelCapacity | float32 | 9 | 9 | fuel.capacity |
+| m_fuelRemainingLaps | float32 | 13 | 13 | fuel.remainingLaps |
+| m_ersStoreEnergy | float32 | 37 | 37 | ers.storeEnergyJ |
+| m_ersDeployMode | uint8 | 41 | 41 | ers.deployMode |
+| m_ersHarvestedThisLapMGUK | float32 | 42 | 42 | ers.harvestedThisLapMGUKJ |
+| m_ersHarvestedThisLapMGUH | float32 | 46 | 46 | ers.harvestedThisLapMGUHJ |
+| m_ersHarvestLimitPerLap | float32 | ausente | 50 | ers.harvestLimitPerLapJ |
+| m_ersDeployedThisLap | float32 | **50** | **54** | ers.deployedThisLapJ |
+
+Offsets absolutos são `B + offset`. As potências nos offsets 29/33 (W) não são energias; `networkPaused` encerra cada carro em 54/58, sem ser interpretado. A soma até energia armazenada é 25 + 3 + 1 + 8 = 37; seguem 4 + 1 + 12/16 + 1 = 18/22 bytes, completando 55/59. O PDF 2026 escreve `m_ersHarvestedLimitPerLap`; o TXT usa `m_ersHarvestLimitPerLap`. Ambos descrevem o mesmo float entre MGU-H e energia utilizada. Adotamos o nome do TXT e o layout coincidente.
+
+### Semântica, unidades e disponibilidade
+
+- Combustível: a EA descreve massa atual e capacidade, **sem explicitar kg nesses comentários**. O Pitwall apresenta kg como convenção de massa, sem conversão do float. Essa unidade é uma hipótese de apresentação a conferir com o jogo/addons; não é uma unidade expressamente confirmada nesses anexos. Não converte para litros nem presume capacidade regulamentar.
+- Voltas: a EA vincula o campo ao valor do MFD, sem impor faixa não negativa nem descrever completamente o significado em cada modo. Um saldo/déficit pode ser negativo; conservamos qualquer float finito assinado. A interface identifica a estimativa do jogo e sua possível natureza de saldo. Não soma voltas de corrida nem a transforma em autonomia absoluta ou previsão própria. Essa semântica contextual permanece no roteiro manual.
+- ERS: energia armazenada é explicitamente documentada em **joules**. Os outros floats descrevem energias por volta, sem repetir a unidade; interpretamos todos na mesma escala J (inferência consistente do bloco, a conferir no jogo). O snapshot conserva os floats, e só a interface converte para MJ dividindo por **1.000.000**, com até três casas decimais (resolução exibida de 1 kJ). Massa e estimativa MFD usam até duas casas decimais. Nenhuma conversão altera o estado.
+- Modos: 0 = Nenhum, 1 = Médio, 2 = Hotlap; 3 = **Overtake em 2025**, **Boost em 2026**. O código uint8 original é preservado; demais códigos aparecem como `Indisponível (código)`. O ID 7 não comprova botão de Boost pressionado, Overtake Mode ativo, Straight Line Mode ou estado de aerodinâmica. O ID 16 permanece fora do escopo.
+- MGU-H existe em ambos os layouts. Um valor finito não negativo, inclusive zero, é exibido em ambos; zero não comprova disponibilidade física do sistema. O limite de recuperação é `null` em 2025; em 2026 é interpretado somente quando válido. Não há substituição por constante ou percentual de bateria.
+- Política local por campo: NaN/infinito tornam-se `null`. Massa, capacidade e energias negativas também; `remainingLaps` negativo finito permanece válido. Zeros são aceitos, inclusive capacidade/limite zero, pois não há sentinela adicional documentada. Não há teto físico inventado nem rejeição por massa exceder capacidade: preservamos as medições independentes em ambientes modificados. Não limitamos energia ao limite de recuperação, que não é capacidade da bateria.
+
+### Uma leitura e um instante para o ID 7
+
+`decodeTyres` mantém a leitura dos pneus e acrescenta `fuel: RealFuel` e `ers: RealErs` à variante histórica `kind: 'tyreStatus'`. Não há segundo parser do payload nem segunda inscrição/socket. Seus `data` continuam sendo `RealTyreStatus`, com o timing único. `RealTelemetrySource` guarda esse ID 7 em um `ReceivedCarStatus`: dados de pneus, combustível, ERS e instante local de recepção. O snapshot público mantém `tyreStatus` e acrescenta `fuel`/`ers` separados, todos com a mesma identidade, timing de `tyreStatus` e `tyreStatusFreshness`.
+
+Uma única decisão de ordem/identidade e uma atribuição síncrona aceitam ou rejeitam o datagrama. Valores novos inválidos viram `null` individualmente na mesma atualização, sem reaproveitar valores antigos ou invalidar os pneus. Assim um pacote estruturalmente válido pode renovar o frescor do ID 7 mesmo contendo campos energéticos indisponíveis; isso não certifica validade desses campos. Pacote estruturalmente rejeitado não renova nada. As verificações de comprimento/versão/índice precedem todas as leituras. A política atômica de rejeição das quatro rodas no **ID 10** permanece inalterada.
+
+Pneus do ID 7, combustível e ERS expiram e são limpos juntos; **não possuem independência temporal entre si**. Mantemos cinco grupos, não sete. Outros IDs preservam sua independência. Valores podem diminuir, aumentar ou reiniciar após flashback/mudança de volta, desde que o contador geral avance segundo a política abaixo. Não há reconhecimento de anomalia pela variação de combustível/energia, nem inferência da física pelo formato/ano/pacote visual. Campos indisponíveis/vencidos são `—`; os painéis só existem em UDP REAL.
+
 ## Sessão, publicação e frescor
 
 `RealTelemetrySource` consome os datagramas do socket existente, somente no Main. A identidade reúne formato, índice do jogador e `sessionUID` (uint64 lido como BigInt e convertido diretamente para string decimal, sem passar por number). Pacotes desconhecidos/rejeitados não mudam identidade nem renovam frescor.
 
 ### Ordem por grupo
 
-Velocidade/marcha, volta, contexto, composto/idade e desgaste guardam seus próprios contadores, tempos de sessão e instantes locais de recepção. O primeiro pacote de cada grupo na identidade ativa é aceito. Depois, somente um `overallFrameId` considerado mais novo substitui esse grupo. Não se comparam os frames entre IDs 1/2/6/7/10, nem entre identidades. Frequências e ordens diferentes continuam permitidas. Contexto e pneus ausentes não impedem as métricas anteriores.
+Velocidade/marcha, volta, contexto, Car Status (composto/idade/combustível/ERS) e desgaste guardam seus próprios contadores, tempos de sessão e instantes locais de recepção. O primeiro pacote de cada grupo na identidade ativa é aceito. Depois, somente um `overallFrameId` considerado mais novo substitui esse grupo. Não se comparam os frames entre IDs 1/2/6/7/10, nem entre identidades. Frequências e ordens diferentes continuam permitidas. Contexto e pneus ausentes não impedem as métricas anteriores.
 
 A distância é `(novo - anterior) >>> 0`: o operador JavaScript converte a diferença para uint32, implementando módulo 2³². Distância entre 1 e 2³¹−1 é aceita; zero é duplicação e mantém a primeira amostra, inclusive se o payload divergir; exatamente 2³¹ é ambíguo e é rejeitado; distância maior é tratada como atraso. Isso permite `0xffffffff → 0` e rejeita um pacote pré-wrap atrasado. A regra pressupõe distância real inferior a meia faixa: não resolve saltos maiores, resets inesperados do contador na mesma identidade ou voltas completas sem observação. Não usamos tempo local para adivinhar a ordem desses casos.
 
@@ -180,6 +222,8 @@ Os pneus publicam `tyreStatus`/`tyreWear` e seus estados `tyreStatusFreshness`/`
 Idade e desgaste podem diminuir com avanço do contador geral, tanto em flashbacks quanto em trocas de pneus. Não há monotonicidade imposta aos valores nem inferência automática de pit stop/stint. Durante uma transição, grupos frescos da mesma identidade podem momentaneamente representar instantes diferentes; a entrega não implementa sincronização entre pacotes nem reconciliação completa de flashbacks.
 
 ## Fixtures
+
+`tests/fixtures/f1-car-status.ts` reutiliza somente a construção sintética de cabeçalho/pneus e escreve combustível/ERS sequencialmente nas regiões packed, sem importar o parser ou suas constantes. Cobre todos os carros, distingue valores do jogador, potências e pausa de rede, incluindo floats inválidos e limites. Testes novos verificam os dois layouts, modos, atualização atômica, ordem, flashback, reinício por volta, expiração conjunta, transições e cleanup; o smoke atravessa UDP → Main → IPC → React. Evidências e roteiro: [Validação V0.3B](validation-v0.3b.md). Não são capturas reais.
 
 `tests/fixtures/f1-header.ts` constrói cabeçalhos sintéticos com esses offsets, sessão fictícia 123, versão de pacote 1, tempo 10,5 e frame 100. O smoke test constrói uma fixture equivalente de formato 2026/ID 16. Não representam payloads completos nem capturas reais. Variantes curtas, IDs inválidos e números não finitos exercitam a rejeição segura.
 

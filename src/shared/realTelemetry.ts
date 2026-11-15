@@ -1,6 +1,8 @@
 import type { Unsubscribe } from './telemetry'
 import type { SessionContext, SessionContextStatus } from './sessionContext'
 import type { RealTyreStatus, RealTyreWear } from './tyres'
+import type { RealFuel } from './fuel'
+import type { RealErs } from './ers'
 
 export type DataFreshness = 'waiting' | 'fresh' | 'stale'
 
@@ -39,6 +41,10 @@ export interface RealTelemetrySnapshot {
   readonly motionFreshness: DataFreshness
   readonly lapFreshness: DataFreshness
   readonly tyreStatus: RealTyreStatus | null
+  // Mesmo ID 7, identidade, timing de tyreStatus e tyreStatusFreshness.
+  // Objetos separados por domínio, sem independência temporal entre eles.
+  readonly fuel: RealFuel | null
+  readonly ers: RealErs | null
   readonly tyreWear: RealTyreWear | null
   readonly tyreStatusFreshness: DataFreshness
   readonly tyreWearFreshness: DataFreshness

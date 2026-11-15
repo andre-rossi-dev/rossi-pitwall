@@ -55,6 +55,13 @@ dd small { font-size: 14px; font-weight: 400; color: #a4a9b3; letter-spacing: 0;
 .tyre-caption { margin: 16px 0 0; }
 .tyre-wheels abbr { text-decoration: none; }
 
+.energy-panel { margin-top: 18px; padding: 18px 20px; background: #16191f; border: 1px solid #2b3039; border-left: 3px solid #ed4048; border-radius: 8px; }
+.energy-panel h2 { font-size: 13px; letter-spacing: 1px; }
+.energy-caption { font-size: 11px; color: #a4a9b3; line-height: 1.5; margin: 12px 0 0; }
+.energy-details { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px 12px; margin: 14px 0 0; }
+.energy-panel dt { font-size: 10px; letter-spacing: .5px; line-height: 1.5; }
+.energy-panel dd { font-size: 18px; letter-spacing: 0; margin-top: 6px; overflow-wrap: anywhere; }
+
 @media (max-width: 720px) {
   .pitwall { padding: 28px 22px; }
   .header { margin-bottom: 30px; }

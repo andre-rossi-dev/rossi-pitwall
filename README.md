@@ -1,6 +1,6 @@
-# ROSSI Pitwall — V0.3A
+# ROSSI Pitwall — V0.3B
 
-Fundação de um aplicativo desktop para Windows que futuramente atuará como engenheiro de corrida local para o **EA SPORTS F1 25**, com temporada **2026** por pacote visual e física padrão do jogo.
+Fundação de um aplicativo desktop para Windows que futuramente atuará como engenheiro de corrida local para o **EA SPORTS F1 25**, com temporada **2026** por pacote visual. O formato UDP e o pacote visual não determinam a física utilizada; addons podem alterar o comportamento energético.
 
 **UDP REAL** decodifica velocidade, marcha e volta do jogador nos formatos 2025 e 2026. **SIMULAÇÃO** mantém o simulador local com valores explicitamente fictícios, sem abrir o jogo. O modo selecionado permanece visível; dados reais ausentes ou vencidos aparecem como **—**, sem preenchimento pelo simulador. A primeira comparação visual com o HUD do F1 25 foi relatada pelo usuário nos dois formatos; observações e limites estão em [Validação V0.2B](docs/validation-v0.2b.md).
 
@@ -16,7 +16,8 @@ Fundação de um aplicativo desktop para Windows que futuramente atuará como en
 - Parser de Car Telemetry (ID 6: velocidade/marcha) e Lap Data (ID 2: volta), com seleção de `playerCarIndex`, sessão uint64 preservada e expiração independente dos dois grupos.
 - Integridade temporal por grupo usando `overallFrameIdentifier`, preservação de flashbacks, confirmação de identidade e proteção limitada em memória contra sessões substituídas.
 - Contexto mínimo de Session Data (ID 1) em 2025/2026: tipo de sessão, circuito e vínculos lógicos de temporada/fim de semana/sessão, separados do UID técnico. Indicação discreta na interface, com desconhecidos explícitos e expiração independente.
-- Monitoramento dos pneus do jogador em 2025/2026: composto real, composto visual e idade (ID 7), além do percentual de desgaste por roda (ID 10). Painel **PNEUS — DADOS REAIS**, com frescor independente dos dois grupos, sem previsões ou estratégias. Validação manual dos sete cenários aprovada conforme relato do usuário; revisão técnica independente pendente.
+- Monitoramento dos pneus do jogador em 2025/2026: composto real, composto visual e idade (ID 7), além do percentual de desgaste por roda (ID 10). Painel **PNEUS — DADOS REAIS**, com frescor independente dos dois grupos, sem previsões ou estratégias. Validação manual dos sete cenários aprovada conforme relato do usuário; PR #7 integrado à main.
+- Combustível e ERS reais do jogador no mesmo ID 7, sem outra decodificação do payload: massa atual/capacidade, estimativa de voltas do MFD, energia armazenada, modo, recuperação MGU-K/MGU-H, utilização por volta e limite de recuperação em 2026. Dois painéis exclusivos de UDP REAL; validação manual dos sete cenários da V0.3B aprovada conforme relato do usuário, com revisão independente pendente.
 - Testes automatizados com Vitest, UDP local e roteiro de integração com Electron real.
 
 ## Stack e pré-requisitos
@@ -89,7 +90,7 @@ npm run test:smoke
 $env:ROSSI_SMOKE_UDP_MODE = $null
 ```
 
-Os resultados desta entrega estão em [Validação V0.3A](docs/validation-v0.3a.md). O histórico permanece em [Validação V0.2C-B](docs/validation-v0.2c-b.md), [Validação V0.2C-A](docs/validation-v0.2c-a.md), [Validação V0.2B](docs/validation-v0.2b.md) e [Validação V0.2A](docs/validation-v0.2a.md).
+Os resultados desta entrega estão em [Validação V0.3B](docs/validation-v0.3b.md). O histórico permanece em [Validação V0.3A](docs/validation-v0.3a.md), [Validação V0.2C-B](docs/validation-v0.2c-b.md), [Validação V0.2C-A](docs/validation-v0.2c-a.md), [Validação V0.2B](docs/validation-v0.2b.md) e [Validação V0.2A](docs/validation-v0.2a.md).
 
 Para verificar também o caminho de desenvolvimento, com o mesmo teste:
 
@@ -108,7 +109,7 @@ src/
       inspectHeader.ts               Inspeção defensiva do cabeçalho EA
       decodeTelemetry.ts             Parser dos payloads IDs 2/6 por formato
       decodeSession.ts               Contexto mínimo do ID 1 por formato
-      decodeTyres.ts                 Composto/idade (ID 7) e desgaste (ID 10)
+      decodeTyres.ts                 Pneus/combustível/ERS (ID 7) e desgaste (ID 10)
       UdpReceiver.ts                 Socket, contadores e diagnóstico
     telemetry/
       SimulatedTelemetrySource.ts    Geração determinística no Main
@@ -121,6 +122,7 @@ src/
       App.tsx                        Interface e inscrição com cleanup
       UdpDiagnostics.tsx             Diagnóstico independente do modo selecionado
       TyrePanel.tsx                  Painel compacto de pneus, somente UDP REAL
+      FuelErsPanels.tsx              Painéis compactos de combustível e ERS reais
       main.tsx                       Entrada React com StrictMode
       env.d.ts                       Tipagem da API exposta
       styles.css                     Identidade visual e layout responsivo
@@ -129,6 +131,8 @@ src/
     realTelemetry.ts                 Estado UDP parcial e validade por grupo
     sessionContext.ts                Tipo/circuito, vínculos e estados do contexto
     tyres.ts                         Contratos e rótulos de compostos modernos
+    fuel.ts                          Combustível e estimativa MFD, sem arredondamento
+    ers.ts                           Energias em J e modos por protocolo
     ipc.ts                           Canal e API pública
     udp.ts                           Contrato de diagnóstico (sem TelemetrySample)
 tests/
@@ -141,10 +145,13 @@ tests/
   session-parser.test.ts
   tyre-parser.test.ts
   tyre-source.test.ts
+  fuel-ers-parser.test.ts
+  fuel-ers-source.test.ts
   fixtures/f1-header.ts               Cabeçalho sintético documentado
   fixtures/f1-telemetry.ts            Payloads completos sintéticos
   fixtures/f1-session.ts              Session Data sintético 2025/2026
   fixtures/f1-tyres.ts                Car Status/Car Damage sintéticos 2025/2026
+  fixtures/f1-car-status.ts           Combustível/ERS sintéticos no ID 7 completo
 scripts/
   smoke.cjs                          Integração com Electron real
 ```
@@ -156,6 +163,10 @@ Fluxo adicional: **UDP local → UdpReceiver → Main → canal `pitwall:udp-dia
 Fluxo real: **mesmo UdpReceiver → decodeTelemetry/decodeSession/decodeTyres → RealTelemetrySource → canal `pitwall:real-telemetry` → Preload → React**. Nenhum datagrama bruto atravessa IPC. A camada real publica estados a até 10 Hz; cada grupo vence após 3 segundos sem amostra aceita como nova. Duplicações e atrasos não renovam frescor. Confirmar a troca de sessão, formato ou índice do jogador limpa os dados anteriores. O detalhamento de offsets e políticas está em [Protocolo UDP](docs/udp-protocol.md).
 
 Os pneus usam dois grupos independentes (`tyreStatus` e `tyreWear`), sem exigir frames iguais. A interface mostra FE/FD/TE/TD, desgaste em percentual com até uma casa decimal e idade em voltas, inclusive zero. Composto real C3 não implica composto visual médio: ambos são lidos separadamente. Códigos fora da tabela moderna aparecem como `Desconhecido (código)`. Um desgaste não finito ou fora de 0–100% rejeita todo o grupo daquele pacote, sem renovar sua validade; a última amostra aceita permanece visível somente até vencer. Dados ausentes/vencidos são `—`. O painel não aparece em SIMULAÇÃO. Seu estado de disponibilidade é independente do estado dos indicadores anteriores; não há interpretação estratégica do desgaste.
+
+Combustível, ERS e composto/idade compartilham exatamente o mesmo datagrama ID 7, timing e `tyreStatusFreshness`. O snapshot acrescenta `fuel` e `ers` como contratos separados, atualizados atomicamente; não são grupos temporais independentes. Campos energéticos novos não finitos ou negativos viram `null` individualmente, sem invalidar os pneus nem manter o valor anterior. A estimativa `remainingLaps` aceita negativos finitos: é o valor do MFD, que pode representar saldo/déficit, sem previsão do Pitwall. Zero permanece válido.
+
+A interface apresenta massa em kg (convenção de apresentação: os anexos EA dizem massa/capacidade, sem explicitar kg) e energia em MJ, com até duas e três casas decimais respectivamente. O estado conserva os floats originais aceitos; 1 MJ = 1.000.000 J. O modo 3 é **Overtake em 2025** e **Boost em 2026**; não comprova acionamento manual, Overtake Mode ativo ou aerodinâmica. MGU-H é um campo presente nos dois formatos, inclusive zero; não se deduz sua ausência física pelo ano. O limite por volta só está disponível em 2026. Não há percentual de bateria, capacidade máxima presumida, consumo médio, recomendações ou previsão própria. Veja [unidades e validação](docs/udp-protocol.md#combustível-e-ers--v03b).
 
 O contexto usa a identidade técnica `(sessionUID, packetFormat, playerCarIndex)` e mantém separados os vínculos `seasonLinkIdentifier`, `weekendLinkIdentifier` e `sessionLinkIdentifier`. Vínculos zero e códigos desconhecidos viram `null`. O ID 1 pode estar ausente sem interromper velocidade, marcha ou volta. Na interface, contexto fresco mostra tipo/circuito reconhecidos; contexto ausente aguarda dados, e contexto vencido ou contraditório aparece como indisponível. O estado da fonte continua descrevendo as métricas, independentemente do contexto.
 
@@ -292,12 +303,18 @@ Em relato recebido em 15/11/2026, o usuário aprovou os sete cenários: saída d
 
 Para repetir e ampliar a validação, execute `npm run build` e `npm start`, configure UDP local conforme acima e compare composto visual, idade e as quatro rodas com o MFD do jogo. Faça troca de pneus e flashbacks, interrompa UDP por mais de três segundos e retome. Repita em 2025 e 2026, incluindo mudanças de sessão e alternância real/simulado. A designação física C0–C6 pode não estar visível no HUD: não deduza sua correção apenas pela cor do composto. O [roteiro completo](docs/validation-v0.3a.md#roteiro-de-validação-manual-com-f1-25) permanece disponível para repetição.
 
+### Validação V0.3B com o jogo
+
+Em relato recebido em **15/11/2026**, o usuário aprovou os sete cenários: combustível, energia armazenada, modos ERS, voltas/flashbacks, pausa/interrupção UDP, troca de protocolo/sessão e interface/simulador, sem anomalias relatadas. O F1 25 foi utilizado **sem addons que modifiquem bateria ou clipping**. São observações manuais, sem comprovação de precisão numérica, calibração de unidades, equivalência física ou funcionamento com addons energéticos. Veja o [relato e seus limites](docs/validation-v0.3b.md#validação-manual-com-f1-25-real--relato-do-usuário).
+
+Para repetir e ampliar a validação, compare combustível e estimativa assinada com o MFD em 2025/2026; confira as energias recebidas sem deduzir uma porcentagem de bateria. Percorra voltas, faça flashbacks, interrompa UDP por mais de três segundos e retome, troque sessão/formato e alterne SIMULAÇÃO/UDP REAL. Confira os painéis com rolagem nas janelas 980×660 e 640×500. O [roteiro completo e as ressalvas de unidades](docs/validation-v0.3b.md) continuam disponíveis; a aprovação relatada não encerra as limitações documentadas.
+
 ## Limitações e próximas entregas
 
-A V0.3A decodifica os três indicadores do jogador primário em IDs 2/6, contexto mínimo do ID 1 e composto/idade/desgaste de pneus nos IDs 7/10, versão 1, formatos 2025/2026. Não há parser completo, estratégias, previsão de degradação, inventário de pneus, temperatura/pressão, combustível/ERS, gaps, clima, bandeiras, Safety Car/VSC, rádio/voz, overlay, atalhos, reconciliação completa de flashbacks/pausas, gravação, replay, banco de dados ou instalador Windows. A ordenação modular por grupo pressupõe distância inferior a meia faixa uint32; empates e ambiguidades são descartados. A confirmação de identidade e a fila dos oito últimos UIDs substituídos reduzem alternâncias indevidas, sem autenticar o emissor nem garantir proteção contra todo atraso. Não há histórico persistente. Pacotes repetidos podem continuar chegando com o jogo parado e não mantêm medições frescas.
+A V0.3B decodifica os três indicadores do jogador primário em IDs 2/6, contexto mínimo do ID 1, composto/idade/desgaste de pneus nos IDs 7/10 e combustível/ERS no ID 7, versão 1, formatos 2025/2026. Não há parser completo, estratégias, previsões de consumo/degradação, inventário de pneus, temperatura/pressão, gaps, clima, bandeiras, Safety Car/VSC, rádio/voz, overlay, atalhos, ID 16, Straight Line Mode, reconciliação completa de flashbacks/pausas, gravação, replay, banco de dados ou instalador Windows. A ordenação modular por grupo pressupõe distância inferior a meia faixa uint32; empates e ambiguidades são descartados. A confirmação de identidade e a fila dos oito últimos UIDs substituídos reduzem alternâncias indevidas, sem autenticar o emissor nem garantir proteção contra todo atraso. Não há histórico persistente. Pacotes repetidos podem continuar chegando com o jogo parado e não mantêm medições frescas.
 
 O uso futuro será local, offline e com um único monitor. O aplicativo não injeta código nem manipula o processo do jogo. Não depende de ReShade, Project Halo ou outros addons visuais. Não há suporte específico a SWOFTY Progressive Career nem a temporadas históricas.
 
-A recepção com o F1 25 real foi relatada na V0.2A; a primeira comparação visual dos indicadores com o HUD foi relatada na V0.2B, nos formatos 2025 e 2026. As validações manuais da V0.2C-A e V0.2C-B também foram relatadas. A integração do PR #6 à main, commit `054328d`, foi confirmada na preparação da V0.3A. Os testes automatizados usam conteúdo sintético e permanecem separados dessas observações. Após o relato manual da V0.3A, o usuário autorizou commit e push exclusivamente da branch `feat/v0.3a-tyre-monitoring`. A revisão técnica independente permanece pendente antes do merge; não há autorização para integrar à main.
+A recepção com o F1 25 real foi relatada na V0.2A; a primeira comparação visual dos indicadores com o HUD foi relatada na V0.2B, nos formatos 2025 e 2026. As validações manuais da V0.2C-A, V0.2C-B, V0.3A e V0.3B também foram relatadas. Na preparação da V0.3B foi confirmado que o PR #7 está integrado à main em `df10ec1`, sincronizada com origin/main. Os testes automatizados usam conteúdo sintético e permanecem separados dessas observações. Após a validação manual da V0.3B, o usuário autorizou commit e push exclusivamente de `feat/v0.3b-fuel-ers`. A revisão técnica independente permanece pendente, após a publicação da branch e antes de qualquer autorização de merge na main.
 
 Referências técnicas: [electron-vite](https://electron-vite.org/guide/) e [segurança do Electron](https://www.electronjs.org/docs/latest/tutorial/security).
