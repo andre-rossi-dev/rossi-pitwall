@@ -10,6 +10,7 @@ const udpMode = process.env.ROSSI_SMOKE_UDP_MODE ?? 'receive'
 assert.ok(['receive', 'occupied', 'invalid'].includes(udpMode), 'Modo de smoke UDP desconhecido')
 let udpPort
 let fixtureSocket
+let sentFixtures = 0
 
 // FIXTURE SINTÉTICA de cabeçalho EA 2026, sem payload. Não é captura do jogo.
 // Mesmos offsets documentados em tests/fixtures/f1-header.ts e docs/udp-protocol.md.
@@ -29,7 +30,10 @@ function syntheticHeader() {
 }
 
 // Pacotes completos SINTÉTICOS, baseados nos anexos EA. Nunca são captura real.
-function syntheticTelemetry(format, id, { session = 123n, speed = 287, gear = 7, lap = 12 } = {}) {
+function syntheticTelemetry(format, id, {
+  session = 123n, speed = 287, gear = 7, lap = 12,
+  frame = 100, overallFrame = 200, time = 10.5
+} = {}) {
   const cars = format === 2025 ? 22 : 24
   const stride = id === 2 ? 57 : format === 2025 ? 60 : 59
   const packet = Buffer.alloc(29 + cars * stride + (id === 2 ? 2 : 3))
@@ -39,6 +43,9 @@ function syntheticTelemetry(format, id, { session = 123n, speed = 287, gear = 7,
   packet[6] = id
   packet[27] = cars - 1
   packet.writeBigUInt64LE(session, 7)
+  packet.writeFloatLE(time, 15)
+  packet.writeUInt32LE(frame, 19)
+  packet.writeUInt32LE(overallFrame, 23)
   for (let car = 0; car < cars; car++) {
     const base = 29 + car * stride
     if (id === 6) {
@@ -62,6 +69,7 @@ async function sendFixture(packet) {
   await new Promise((resolve, reject) => {
     fixtureSocket.send(packet, udpPort, '127.0.0.1', (error) => error ? reject(error) : resolve())
   })
+  sentFixtures++
 }
 
 const metricEquals = (metric, value) => `document.querySelector('[data-testid="${metric}"]').textContent === ${JSON.stringify(String(value))}`
@@ -151,9 +159,7 @@ app.once('browser-window-created', (_event, window) => {
           true;
         `)
         fixtureSocket = createSocket('udp4')
-        await new Promise((resolve, reject) => {
-          fixtureSocket.send(syntheticHeader(), udpPort, '127.0.0.1', (error) => error ? reject(error) : resolve())
-        })
+        await sendFixture(syntheticHeader())
         await waitForUi(window, `window.__smokeUdp?.headers2026 === 1 && document.querySelector('[data-testid="udp-packets"]').textContent === '1'`)
         const diagnostic = await window.webContents.executeJavaScript('window.__smokeUdp')
         assert.equal(diagnostic.bytesReceived, 29)
@@ -163,18 +169,40 @@ app.once('browser-window-created', (_event, window) => {
         await window.webContents.executeJavaScript('window.__smokeCancelUdp()')
         await selectMode(window, 'udp')
         await waitForUi(window, metricEquals('speed', '—'))
-        for (const format of [2025, 2026]) {
+        const waitForAllPackets = () => waitForUi(window, metricEquals('udp-packets', sentFixtures))
+        // Ida e volta de formato com o mesmo UID; cada mudança exige confirmação.
+        for (const format of [2025, 2026, 2025, 2026]) {
           await sendFixture(syntheticTelemetry(format, 2))
+          await sendFixture(syntheticTelemetry(format, 2, { overallFrame: 201 }))
           await waitForUi(window, `${metricEquals('lap', 12)} && ${metricEquals('speed', '—')}`)
           await sendFixture(syntheticTelemetry(format, 6, { gear: -1 }))
           await waitForUi(window, `${metricEquals('speed', 287)} && ${metricEquals('gear', 'R')}`)
-          await sendFixture(syntheticTelemetry(format, 6, { speed: 0, gear: 0 }))
+          await sendFixture(syntheticTelemetry(format, 6, { overallFrame: 201, speed: 0, gear: 0 }))
           await waitForUi(window, `${metricEquals('speed', 0)} && ${metricEquals('gear', 'N')}`)
-          await sendFixture(syntheticTelemetry(format, 6, { session: 18446744073709551615n, speed: 301, gear: 8 }))
-          await waitForUi(window, `${metricEquals('speed', 301)} && ${metricEquals('gear', 8)} && ${metricEquals('lap', '—')}`)
-          await sendFixture(syntheticTelemetry(format, 2, { session: 18446744073709551615n, lap: 3 }))
-          await waitForUi(window, metricEquals('lap', 3))
+          // Duplicata conflitante e atraso não substituem a amostra aceita.
+          await sendFixture(syntheticTelemetry(format, 6, { overallFrame: 201, speed: 999 }))
+          await sendFixture(syntheticTelemetry(format, 6, { overallFrame: 199, speed: 999 }))
+          await waitForAllPackets()
+          assert.equal(await window.webContents.executeJavaScript(metricEquals('speed', 0)), true)
+          // Flashback sintético: contador geral avança, frame/tempo/volta recuam.
+          await sendFixture(syntheticTelemetry(format, 6, { overallFrame: 202, frame: 2, time: 1, speed: 80, gear: 2 }))
+          await sendFixture(syntheticTelemetry(format, 2, { overallFrame: 202, frame: 1, time: 0.5, lap: 3 }))
+          await waitForUi(window, `${metricEquals('speed', 80)} && ${metricEquals('lap', 3)}`)
+          await sendFixture(syntheticTelemetry(format, 2, { overallFrame: 201, lap: 12 }))
+          await waitForAllPackets()
+          assert.equal(await window.webContents.executeJavaScript(metricEquals('lap', 3)), true)
         }
+        // Nova sessão inicia com contador menor, sem comparação com a anterior.
+        await sendFixture(syntheticTelemetry(2026, 6, { session: 18446744073709551615n, overallFrame: 0, speed: 301, gear: 8 }))
+        await waitForAllPackets()
+        assert.equal(await window.webContents.executeJavaScript(metricEquals('speed', 80)), true)
+        await sendFixture(syntheticTelemetry(2026, 6, { session: 18446744073709551615n, overallFrame: 1, speed: 301, gear: 8 }))
+        await waitForUi(window, `${metricEquals('speed', 301)} && ${metricEquals('gear', 8)} && ${metricEquals('lap', '—')}`)
+        await sendFixture(syntheticTelemetry(2026, 2, { session: 18446744073709551615n, overallFrame: 0, lap: 3 }))
+        await waitForUi(window, metricEquals('lap', 3))
+        for (const overallFrame of [500, 501]) await sendFixture(syntheticTelemetry(2025, 6, { overallFrame, speed: 999 }))
+        await waitForAllPackets()
+        assert.equal(await window.webContents.executeJavaScript(`${metricEquals('speed', 301)} && ${metricEquals('lap', 3)}`), true)
         await window.webContents.executeJavaScript(`
           window.__smokeRealCount = 0;
           window.__smokeCancelReal = window.pitwall.onRealTelemetry(() => { window.__smokeRealCount++; });
@@ -200,14 +228,18 @@ app.once('browser-window-created', (_event, window) => {
       const afterReload = await readTelemetry()
       assert.ok(afterReload.sample.metadata.frameId > second.sample.metadata.frameId)
       if (udpMode === 'receive') {
-        await waitForUi(window, `document.querySelector('[data-testid="udp-packets"]').textContent === '12'`)
+        await waitForUi(window, metricEquals('udp-packets', sentFixtures))
         await waitForUi(window, `${metricEquals('speed', 301)} && ${metricEquals('lap', 3)}`)
         await waitForUi(window, `document.querySelector('[data-testid="source-status"]').textContent === 'Dados desatualizados'`)
         await waitForUi(window, `${metricEquals('speed', '—')} && ${metricEquals('gear', '—')} && ${metricEquals('lap', '—')}`)
         await waitForUi(window, `document.querySelector('[data-testid="udp-status"]').textContent.includes('Sem datagramas')`)
-        await sendFixture(syntheticTelemetry(2026, 6, { session: 18446744073709551615n, speed: 123, gear: 4 }))
+        // Uma duplicação após silêncio mantém os dados vencidos.
+        await sendFixture(syntheticTelemetry(2026, 6, { session: 18446744073709551615n, overallFrame: 1, speed: 301, gear: 8 }))
+        await waitForUi(window, metricEquals('udp-packets', sentFixtures))
+        assert.equal(await window.webContents.executeJavaScript(metricEquals('speed', '—')), true)
+        await sendFixture(syntheticTelemetry(2026, 6, { session: 18446744073709551615n, overallFrame: 2, speed: 123, gear: 4 }))
         await waitForUi(window, `${metricEquals('speed', 123)} && ${metricEquals('lap', '—')}`)
-        await sendFixture(syntheticTelemetry(2026, 2, { session: 18446744073709551615n, lap: 2 }))
+        await sendFixture(syntheticTelemetry(2026, 2, { session: 18446744073709551615n, overallFrame: 1, lap: 2 }))
         await waitForUi(window, metricEquals('lap', 2))
       }
       const screenshot = await window.webContents.capturePage()

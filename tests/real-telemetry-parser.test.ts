@@ -8,7 +8,7 @@ describe.each([2025, 2026] as const)('decodificação UDP %i com fixtures sinté
   it.each([0, 3, cars - 1])('seleciona o carro %i e preserva uint64 máximo', (player) => {
     expect(decodeTelemetry(syntheticTelemetry(6, { format, player }))).toEqual({
       kind: 'motion', packetFormat: format, playerCarIndex: player, sessionId: '18446744073709551615',
-      data: { speedKph: 287, gear: 7, frameId: 100, sessionTimeSeconds: 10.5 }
+      data: { speedKph: 287, gear: 7, frameId: 100, overallFrameId: 200, sessionTimeSeconds: 10.5 }
     })
     expect(decodeTelemetry(syntheticTelemetry(2, { format, player }))).toMatchObject({
       kind: 'lap', playerCarIndex: player, data: { number: 12 }
@@ -17,6 +17,13 @@ describe.each([2025, 2026] as const)('decodificação UDP %i com fixtures sinté
 
   it.each([-1, 0, 1, 2, 3, 4, 5, 6, 7, 8])('decodifica a marcha %i com sinal', (gear) => {
     expect(decodeTelemetry(syntheticTelemetry(6, { format, gear }))).toMatchObject({ data: { gear } })
+  })
+
+  it.each([2, 6] as const)('lê os contadores uint32 independentes e seus limites no ID %i', (id) => {
+    for (const overallFrame of [0, 0x7fffffff, 0x80000000, 0xffffffff]) {
+      expect(decodeTelemetry(syntheticTelemetry(id, { format, frame: 7, overallFrame, time: -1 })))
+        .toMatchObject({ data: { frameId: 7, overallFrameId: overallFrame, sessionTimeSeconds: -1 } })
+    }
   })
 
   it.each([2, 6] as const)('rejeita todos os truncamentos, bytes extras e versão incompatível do ID %i', (id) => {

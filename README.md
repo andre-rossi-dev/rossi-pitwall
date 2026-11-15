@@ -1,4 +1,4 @@
-# ROSSI Pitwall — V0.2B
+# ROSSI Pitwall — V0.2C-A
 
 Fundação de um aplicativo desktop para Windows que futuramente atuará como engenheiro de corrida local para o **EA SPORTS F1 25**, com temporada **2026** por pacote visual e física padrão do jogo.
 
@@ -14,6 +14,7 @@ Fundação de um aplicativo desktop para Windows que futuramente atuará como en
 - Porta configurável, estados de recepção, contadores de pacotes/bytes e tratamento de porta ocupada sem interromper o simulador.
 - Inspeção dos cabeçalhos 2025/2026 conforme a EA; formatos desconhecidos são informados sem interpretar o layout.
 - Parser de Car Telemetry (ID 6: velocidade/marcha) e Lap Data (ID 2: volta), com seleção de `playerCarIndex`, sessão uint64 preservada e expiração independente dos dois grupos.
+- Integridade temporal por grupo usando `overallFrameIdentifier`, preservação de flashbacks, confirmação de identidade e proteção limitada em memória contra sessões substituídas.
 - Testes automatizados com Vitest, UDP local e roteiro de integração com Electron real.
 
 ## Stack e pré-requisitos
@@ -86,7 +87,7 @@ npm run test:smoke
 $env:ROSSI_SMOKE_UDP_MODE = $null
 ```
 
-Os resultados desta entrega estão em [Validação V0.2B](docs/validation-v0.2b.md). O histórico anterior permanece em [Validação V0.2A](docs/validation-v0.2a.md).
+Os resultados desta entrega estão em [Validação V0.2C-A](docs/validation-v0.2c-a.md). O histórico permanece em [Validação V0.2B](docs/validation-v0.2b.md) e [Validação V0.2A](docs/validation-v0.2a.md).
 
 Para verificar também o caminho de desenvolvimento, com o mesmo teste:
 
@@ -140,7 +141,7 @@ Fluxo: **SimulatedTelemetrySource → Main → canal `pitwall:telemetry` → Pre
 
 Fluxo adicional: **UDP local → UdpReceiver → Main → canal `pitwall:udp-diagnostics` → Preload → painel de diagnóstico**. O UDP não alimenta as métricas simuladas.
 
-Fluxo real: **mesmo UdpReceiver → decodeTelemetry → RealTelemetrySource → canal `pitwall:real-telemetry` → Preload → React**. Nenhum datagrama bruto atravessa IPC. A camada real publica estados a até 10 Hz; cada grupo vence após 3 segundos de ausência de pacotes válidos daquele tipo. Trocar sessão, formato ou índice do jogador limpa os dados anteriores. O detalhamento de offsets e políticas está em [Protocolo UDP](docs/udp-protocol.md).
+Fluxo real: **mesmo UdpReceiver → decodeTelemetry → RealTelemetrySource → canal `pitwall:real-telemetry` → Preload → React**. Nenhum datagrama bruto atravessa IPC. A camada real publica estados a até 10 Hz; cada grupo vence após 3 segundos sem amostra aceita como nova. Duplicações e atrasos não renovam frescor. Confirmar a troca de sessão, formato ou índice do jogador limpa os dados anteriores. O detalhamento de offsets e políticas está em [Protocolo UDP](docs/udp-protocol.md).
 
 O Main é dono da fonte e do timer. A janela inicia a fonte quando a página termina de carregar. Recarregar a página não cria outro timer nem reinicia a sequência. Ao fechar a janela ou sair do aplicativo, o Main cancela sua inscrição e para a fonte.
 
@@ -232,7 +233,7 @@ Esse histórico valida apenas a recepção da V0.2A. Na V0.2B, os indicadores de
 
 Em relato recebido em 14/11/2026, o usuário observou velocidade, marchas R/N/1–8 e volta acompanhando o jogo, expiração após aproximadamente 3 segundos de interrupção, retomada e aceitação de retrocessos em flashbacks repetidos, inclusive para uma volta anterior. Os formatos 2025 e 2026 funcionaram nos testes manuais, com o jogo em janela 1280×720 ao lado do Pitwall. São observações visuais, sem medição de latência ou comprovação de ausência de perdas, sincronização perfeita ou reconciliação completa de flashbacks. Veja o [registro detalhado](docs/validation-v0.2b.md#primeira-validação-manual-com-o-f1-25-real).
 
-O roteiro abaixo permanece para repetição e ampliação dos testes; o relato não confirma a execução de todos os seus passos. A entrega aguarda revisão de código antes da publicação.
+O roteiro abaixo permanece como histórico da V0.2B; o relato não confirma a execução de todos os seus passos. A integração dessa versão à main foi confirmada na preparação da V0.2C-A. Para a política temporal atual, use também o roteiro seguinte.
 
 1. Execute `npm run build` e `npm start`, selecione **UDP REAL** e configure o jogo como acima, inicialmente em UDP 2025.
 2. Na pista, compare velocidade em km/h, marcha e volta com o HUD. Verifique parado (0 km/h), neutro (N), ré (R) e marchas 1–8 quando possível. A interface atualiza a até 10 Hz, sem sincronização exata de frames com o HUD.
@@ -242,12 +243,25 @@ O roteiro abaixo permanece para repetição e ampliação dos testes; o relato n
 6. Alterne para SIMULAÇÃO e volte para UDP REAL: valores fictícios nunca devem preencher o modo real. Recarregue a página: volta a UDP REAL, preservando o estado Main e os contadores. Teste 980×660 e 640×500; rolagem vertical é esperada na janela menor.
 7. Feche/reabra o aplicativo, confirme liberação da porta e registre build do jogo, formato, taxa UDP, índice, valores comparados e divergências. Repita os cenários nos dois formatos antes de publicar a entrega.
 
+### Validação V0.2C-A com o jogo
+
+Em relato recebido em 14/11/2026, o usuário informou sucesso nos seis cenários: telemetria normal em UDP 2025/2026, flashbacks, pausa/Alt+Tab, mudança de sessão, troca de protocolo e retomada de save, sem travamentos, congelamentos ou anomalias observadas. São observações do usuário, não medições automatizadas nem prova de funcionamento universal; veja a [validação manual e seus limites](docs/validation-v0.2c-a.md#validação-manual-com-o-f1-25-real--relato-do-usuário). O roteiro abaixo permanece para repetição e ampliação da evidência. Execute `npm run build` e `npm start`, configure o UDP como acima e repita separadamente em 2025 e 2026:
+
+1. Compare velocidade, R/N/1–8 e volta com o HUD, inclusive parado e cruzando a linha de chegada.
+2. Faça flashbacks repetidos, inclusive atravessando a linha para uma volta anterior. Confirme que as métricas acompanham a retomada, sem restaurar a volta pré-flashback. Registre qualquer congelamento/divergência.
+3. Pause, retome e use Alt+Tab. Depois desative explicitamente o UDP por mais de 3 segundos e reative. Confira expiração por grupo e recuperação sem reiniciar o Pitwall; silêncio não deve ser identificado como pausa. Se houver tráfego repetindo o mesmo contador, é esperado que as métricas vençam.
+4. Troque de sessão e alterne 2025 → 2026 → 2025, sem reiniciar o aplicativo. Confira atualização da identidade após confirmação e ausência de valores misturados. A confirmação precisa de avanço no mesmo ID dentro de um segundo; não depende de IDs 2 e 6 sincronizados.
+5. Recarregue o Renderer durante o fluxo e após interrupção: contadores e identidade Main devem persistir. Alterne SIMULAÇÃO/UDP REAL e feche/reabra para conferir cleanup e liberação da porta.
+6. Se aplicável, retome um save e registre se o UID é reutilizado ou o contador geral reinicia. UIDs substituídos ainda retidos são bloqueados; resets do contador na mesma identidade não são automaticamente reclassificados como sessão nova.
+
+Registre versão/build do jogo, formato observado, taxa UDP, índice do jogador, sequência de ações e resultados separadamente por formato. Reordenação, duplicação, wraparound e UIDs antigos são exercitados por fixtures determinísticas; o HUD sozinho não comprova esses cenários. Detalhes, limites e evidências em [Validação V0.2C-A](docs/validation-v0.2c-a.md).
+
 ## Limitações e próximas entregas
 
-A V0.2B decodifica somente os três indicadores do jogador primário em IDs 2/6, versão 1, formatos 2025/2026. Não há parser completo, estratégias, pneus/combustível/ERS, gaps, clima, bandeiras, Safety Car/VSC, rádio/voz, overlay, atalhos, reconciliação de flashbacks/pausas, gravação, replay, banco de dados ou instalador Windows. Pacotes atrasados prevalecem na ordem de chegada; não há histórico de sessões nem autenticação do emissor. Pacotes repetidos podem continuar chegando com o jogo parado.
+A V0.2C-A decodifica somente os três indicadores do jogador primário em IDs 2/6, versão 1, formatos 2025/2026. Não há parser completo, estratégias, pneus/combustível/ERS, gaps, clima, bandeiras, Safety Car/VSC, rádio/voz, overlay, atalhos, reconciliação completa de flashbacks/pausas, gravação, replay, banco de dados ou instalador Windows. A ordenação modular por grupo pressupõe distância inferior a meia faixa uint32; empates e ambiguidades são descartados. A confirmação de identidade e a fila dos oito últimos UIDs substituídos reduzem alternâncias indevidas, sem autenticar o emissor nem garantir proteção contra todo atraso. Não há histórico persistente. Pacotes repetidos podem continuar chegando com o jogo parado e não mantêm medições frescas.
 
 O uso futuro será local, offline e com um único monitor. O aplicativo não injeta código nem manipula o processo do jogo. Não depende de ReShade, Project Halo ou outros addons visuais. Não há suporte específico a SWOFTY Progressive Career nem a temporadas históricas.
 
-A recepção com o F1 25 real foi relatada na V0.2A; a primeira comparação visual dos indicadores com o HUD foi relatada na V0.2B, nos formatos 2025 e 2026. Os testes automatizados usam conteúdo sintético e permanecem separados dessas observações. A revisão do código precede a publicação; esta tarefa não inclui commit, push ou merge.
+A recepção com o F1 25 real foi relatada na V0.2A; a primeira comparação visual dos indicadores com o HUD foi relatada na V0.2B, nos formatos 2025 e 2026. A validação manual da V0.2C-A também foi relatada, nos seis cenários descritos acima. Os testes automatizados usam conteúdo sintético e permanecem separados dessas observações. Commit e push da branch V0.2C-A foram autorizados; a revisão técnica independente ocorrerá antes do merge.
 
 Referências técnicas: [electron-vite](https://electron-vite.org/guide/) e [segurança do Electron](https://www.electronjs.org/docs/latest/tutorial/security).

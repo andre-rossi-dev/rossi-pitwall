@@ -24,7 +24,8 @@
 - Seguir as especificações oficiais da EA para F1 25, referenciadas em [docs/udp-protocol.md](docs/udp-protocol.md). Preservar compatibilidade com UDP 2025 e 2026 dentro do escopo implementado; inspeção de cabeçalho não equivale a suporte ao payload completo.
 - Identificar o formato por `packetFormat` recebido. Não inferir o protocolo pelo pacote visual 2026 nem pelo ano do jogo.
 - Validar limites antes de ler buffers e tratar formatos desconhecidos defensivamente. Cabeçalho reconhecido não autentica o remetente nem comprova validade do payload ou ausência de perda de pacotes.
-- Considerar pausas, flashbacks e retrocessos de frames/tempo como requisitos arquiteturais futuros. Não pressupor monotonicidade do tempo da sessão, dos frames ou das voltas; não descartar dados apenas por retrocesso. Silêncio UDP não comprova pausa do jogo.
+- Preservar retrocessos de frameIdentifier, tempo e volta em flashbacks. Ordenar cada grupo pela política defensiva de overallFrameIdentifier documentada em docs/udp-protocol.md, sem comparar grupos ou identidades diferentes. Duplicações e atrasos não renovam frescor; silêncio UDP não comprova pausa nem limpa identidade. Reconciliação completa de flashbacks permanece fora do escopo.
+- Confirmar mudanças de identidade antes de substituir grupos e manter proteção limitada em memória contra UIDs de sessões substituídas, conforme docs/udp-protocol.md. Não misturar métricas de identidades diferentes.
 - Não implementar injeção de código, controle do jogo ou contorno de proteções.
 
 ## Qualidade e evidências
@@ -58,6 +59,6 @@ Os scripts de [package.json](package.json) são a fonte de verdade:
 | `npm run test:smoke` | Testar integração com Electron real; requer build prévio e sessão gráfica do Windows. |
 
 - Consultar o [README.md](README.md) para instalação, execução, arquitetura, configuração e limites do produto.
-- Consultar [docs/udp-protocol.md](docs/udp-protocol.md) para fontes oficiais, layout e política de inspeção; [docs/validation-v0.2a.md](docs/validation-v0.2a.md) para evidências e limitações da V0.2A.
+- Consultar [docs/udp-protocol.md](docs/udp-protocol.md) para fontes oficiais, layout e políticas; os registros docs/validation-v0.2a.md, docs/validation-v0.2b.md e docs/validation-v0.2c-a.md distinguem evidências e limitações de cada entrega.
 - Manter versões, offsets, parâmetros operacionais e resultados de validação nos documentos apropriados, evitando duplicá-los aqui. Não registrar credenciais, informações pessoais, caminhos locais ou parâmetros temporários como regras permanentes.
 - Atualizar este arquivo quando decisões arquiteturais mudarem, mantendo-o conciso e coerente com o código e a documentação.
