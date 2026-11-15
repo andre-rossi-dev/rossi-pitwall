@@ -15,6 +15,12 @@ describe.each([2025, 2026] as const)('pneus UDP %i — fixtures sintéticas', (f
       sessionId: '18446744073709551615', data: {
         frameId: 100, overallFrameId: 200, sessionTimeSeconds: 10.5,
         actualCompound: 18, visualCompound: 16, ageLaps: 0
+      },
+      fuel: { inTank: 0, capacity: 0, remainingLaps: 0 },
+      ers: {
+        storeEnergyJ: 0, deployMode: 0, harvestedThisLapMGUKJ: 0,
+        harvestedThisLapMGUHJ: 0, deployedThisLapJ: 0,
+        harvestLimitPerLapJ: format === 2026 ? 0 : null
       }
     })
     expect(decodeTyres(wear)).toMatchObject({

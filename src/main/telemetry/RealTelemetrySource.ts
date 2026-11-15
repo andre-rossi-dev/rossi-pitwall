@@ -11,6 +11,8 @@ import type { DecodedSession } from '../udp/decodeSession'
 import { decodeTyres } from '../udp/decodeTyres'
 import type { DecodedTyres } from '../udp/decodeTyres'
 import type { RealTyreStatus, RealTyreWear } from '../../shared/tyres'
+import type { RealFuel } from '../../shared/fuel'
+import type { RealErs } from '../../shared/ers'
 import type { SessionContext, SessionDetails, SessionContextStatus } from '../../shared/sessionContext'
 
 export const REAL_TELEMETRY_INTERVAL_MS = 100
@@ -19,6 +21,10 @@ export const IDENTITY_CONFIRMATION_MS = 1000
 export const RETIRED_SESSION_LIMIT = 8
 
 interface Received<T> { readonly data: T; readonly at: number }
+interface ReceivedCarStatus extends Received<RealTyreStatus> {
+  readonly fuel: RealFuel
+  readonly ers: RealErs
+}
 type DecodedPacket = DecodedTelemetry | DecodedSession | DecodedTyres
 const contextFields = [
   'sessionType', 'trackId', 'seasonLinkIdentifier', 'weekendLinkIdentifier', 'sessionLinkIdentifier'
@@ -66,7 +72,7 @@ export class RealTelemetrySource implements Source {
   private identity: RealTelemetryIdentity | null = null
   private motion: Received<RealMotion> | null = null
   private lap: Received<RealLap> | null = null
-  private tyreStatus: Received<RealTyreStatus> | null = null
+  private tyreStatus: ReceivedCarStatus | null = null
   private tyreWear: Received<RealTyreWear> | null = null
   private context: Received<SessionContext> | null = null
   private contextBinding: SessionDetails | null = null
@@ -135,6 +141,8 @@ export class RealTelemetrySource implements Source {
       identityRevision: this.identityRevision, contextStatus,
       tyreStatusFreshness, tyreWearFreshness,
       tyreStatus: tyreStatusFreshness === 'fresh' ? this.tyreStatus!.data : null,
+      fuel: tyreStatusFreshness === 'fresh' ? this.tyreStatus!.fuel : null,
+      ers: tyreStatusFreshness === 'fresh' ? this.tyreStatus!.ers : null,
       tyreWear: tyreWearFreshness === 'fresh' ? this.tyreWear!.data : null,
       context: contextStatus === 'identified' ? this.context!.data : null,
       motion: motionFreshness === 'fresh' ? this.motion!.data : null,
@@ -197,7 +205,14 @@ export class RealTelemetrySource implements Source {
   private apply(packet: DecodedPacket, at: number): void {
     if (packet.kind === 'motion') this.motion = { data: Object.freeze(packet.data), at }
     else if (packet.kind === 'lap') this.lap = { data: Object.freeze(packet.data), at }
-    else if (packet.kind === 'tyreStatus') this.tyreStatus = { data: Object.freeze(packet.data), at }
+    else if (packet.kind === 'tyreStatus') {
+      // Uma atribuição substitui todos os domínios do ID 7, inclusive campos
+      // inválidos (null); nenhum valor de uma amostra anterior é reaproveitado.
+      this.tyreStatus = {
+        data: Object.freeze(packet.data), at,
+        fuel: Object.freeze(packet.fuel), ers: Object.freeze(packet.ers)
+      }
+    }
     else if (packet.kind === 'tyreWear') this.tyreWear = { data: Object.freeze(packet.data), at }
     else {
       const previous = this.contextBinding

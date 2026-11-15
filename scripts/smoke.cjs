@@ -85,10 +85,12 @@ function syntheticSession(format, {
   return packet
 }
 
-// Pneus SINTÉTICOS completos, independentes do parser; ordem TE, TD, FE, FD.
+// Pneus/combustível/ERS SINTÉTICOS completos, independentes do parser.
 function syntheticTyres(format, id, {
   session = 123n, overallFrame = 200, frame = 100, time = 10.5,
-  actual = 18, visual = 16, age = 8, wear = [11.25, 22.5, 33.75, 44]
+  actual = 18, visual = 16, age = 8, wear = [11.25, 22.5, 33.75, 44],
+  fuel = 42.25, capacity = 110, remainingLaps = -1.25, store = 2_500_000,
+  mode = 3, mguk = 1_250_000, mguh = 750_000, deployed = 3_125_000, limit = 8_500_000
 } = {}) {
   const cars = format === 2025 ? 22 : 24
   const stride = id === 7 ? (format === 2025 ? 55 : 59) : 46
@@ -107,6 +109,11 @@ function syntheticTyres(format, id, {
       packet[base + 25] = car === cars - 1 ? actual : 20
       packet[base + 26] = car === cars - 1 ? visual : 18
       packet[base + 27] = car === cars - 1 ? age : 1
+      for (const [offset, value] of [
+        [5, fuel], [9, capacity], [13, remainingLaps], [37, store], [42, mguk], [46, mguh],
+        ...(format === 2026 ? [[50, limit], [54, deployed]] : [[50, deployed]])
+      ]) packet.writeFloatLE(car === cars - 1 ? value : 1, base + offset)
+      packet[base + 41] = car === cars - 1 ? mode : 1
     } else {
       for (let wheel = 0; wheel < 4; wheel++) {
         packet.writeFloatLE(car === cars - 1 ? wear[wheel] : car + wheel, base + wheel * 4)
@@ -181,6 +188,7 @@ app.once('browser-window-created', (_event, window) => {
       await waitForUi(window, `document.querySelector('[data-testid="source-status"]').textContent === 'Aguardando dados'`)
       await waitForUi(window, metricEquals('session-context', 'Aguardando contexto da sessão'))
       await waitForUi(window, `${metricEquals('tyre-age', '—')} && ${metricEquals('tyre-frontLeft', '—')}`)
+      await waitForUi(window, `${metricEquals('fuel-tank', '—')} && ${metricEquals('ers-store', '—')}`)
       await selectMode(window, 'simulated')
       await waitForUi(window, `document.querySelector('[data-testid="source-status"]').textContent === 'Fonte ativa'`)
       assert.equal(await window.webContents.executeJavaScript('document.querySelector(\'[data-testid="session-context"]\') === null'), true)
@@ -233,6 +241,7 @@ app.once('browser-window-created', (_event, window) => {
       assert.equal(ui.lap, 1)
       assert.equal(ui.nodeAccess, 'undefined')
       assert.equal(await window.webContents.executeJavaScript('document.querySelector(\'[data-testid="tyre-panel"]\') === null'), true)
+      assert.equal(await window.webContents.executeJavaScript('document.querySelector(\'[data-testid="fuel-panel"], [data-testid="ers-panel"]\') === null'), true)
       assert.deepEqual(ui.apiKeys, ['onTelemetry', 'onUdpDiagnostics', 'onRealTelemetry'])
 
       if (udpMode === 'receive') {
@@ -260,22 +269,43 @@ app.once('browser-window-created', (_event, window) => {
           await waitForUi(window, `${metricEquals('lap', 12)} && ${metricEquals('speed', '—')}`)
           await waitForUi(window, metricEquals('session-context', 'Aguardando contexto da sessão'))
           await waitForUi(window, `${metricEquals('tyre-age', '—')} && ${metricEquals('tyre-frontLeft', '—')}`)
+          await waitForUi(window, `${metricEquals('fuel-tank', '—')} && ${metricEquals('ers-store', '—')}`)
           await sendFixture(syntheticTyres(format, 7))
           await waitForUi(window, `${metricEquals('tyre-visual', 'Macio')} && ${metricEquals('tyre-actual', 'C3')} && ${metricEquals('tyre-age', 8)} && ${metricEquals('tyre-frontLeft', '—')}`)
+          await waitForUi(window, [
+            metricEquals('fuel-tank', '42,25 kg'), metricEquals('fuel-capacity', '110 kg'),
+            metricEquals('fuel-laps', '-1,25 voltas'), metricEquals('ers-store', '2,5 MJ'),
+            metricEquals('ers-mode', format === 2025 ? 'Overtake' : 'Boost'),
+            metricEquals('ers-mguk', '1,25 MJ'), metricEquals('ers-mguh', '0,75 MJ'),
+            metricEquals('ers-deployed', '3,125 MJ'),
+            format === 2026 ? metricEquals('ers-limit', '8,5 MJ') : 'document.querySelector(\'[data-testid="ers-limit"]\') === null'
+          ].join(' && '))
           await sendFixture(syntheticTyres(format, 10, { overallFrame: 50 }))
           await waitForUi(window, `${metricEquals('tyre-frontLeft', '33,8%')} && ${metricEquals('tyre-frontRight', '44%')} && ${metricEquals('tyre-rearLeft', '11,3%')} && ${metricEquals('tyre-rearRight', '22,5%')}`)
-          await sendFixture(syntheticTyres(format, 7, { age: 99 })) // Duplicata.
+          await sendFixture(syntheticTyres(format, 7, { age: 99, fuel: 99, store: 99 })) // Duplicata.
           await sendFixture(syntheticTyres(format, 10, { overallFrame: 49, wear: [99, 99, 99, 99] }))
           await waitForAllPackets()
           assert.equal(await window.webContents.executeJavaScript(metricEquals('tyre-age', 8)), true)
           assert.equal(await window.webContents.executeJavaScript(metricEquals('tyre-frontLeft', '33,8%')), true)
-          await sendFixture(syntheticTyres(format, 7, { overallFrame: 201, frame: 1, time: 0.5, age: 0 }))
+          assert.equal(await window.webContents.executeJavaScript(`${metricEquals('fuel-tank', '42,25 kg')} && ${metricEquals('ers-store', '2,5 MJ')}`), true)
+          await sendFixture(syntheticTyres(format, 7, { overallFrame: 201, frame: 1, time: 0.5, age: 0, fuel: 50, mguk: 0, mguh: 0, deployed: 0 }))
           await sendFixture(syntheticTyres(format, 10, { overallFrame: 51, frame: 2, time: 1, wear: [0, 1, 2, 3] }))
           await waitForUi(window, `${metricEquals('tyre-age', 0)} && ${metricEquals('tyre-frontLeft', '2%')}`)
+          await waitForUi(window, `${metricEquals('fuel-tank', '50 kg')} && ${metricEquals('ers-mguk', '0 MJ')} && ${metricEquals('ers-mguh', '0 MJ')} && ${metricEquals('ers-deployed', '0 MJ')}`)
           // Troca de pneus sintética: tempo/frame avançam, composto muda e desgaste diminui.
           await sendFixture(syntheticTyres(format, 7, { overallFrame: 202, frame: 3, time: 2, actual: 20, visual: 18, age: 0 }))
           await sendFixture(syntheticTyres(format, 10, { overallFrame: 52, frame: 4, time: 2.5, wear: [0, 0, 0, 0] }))
           await waitForUi(window, `${metricEquals('tyre-actual', 'C1')} && ${metricEquals('tyre-visual', 'Duro')} && ${metricEquals('tyre-age', 0)} && ${metricEquals('tyre-frontLeft', '0%')} && ${metricEquals('tyre-frontRight', '0%')} && ${metricEquals('tyre-rearLeft', '0%')} && ${metricEquals('tyre-rearRight', '0%')}`)
+          // Campo inválido substitui o valor anterior por indisponível; pneus seguem válidos.
+          await sendFixture(syntheticTyres(format, 7, { overallFrame: 203, fuel: NaN, capacity: 0,
+            remainingLaps: 0, store: Infinity, mguh: -1, limit: NaN, mode: 255, age: 1 }))
+          await waitForUi(window, [metricEquals('fuel-tank', '—'), metricEquals('fuel-capacity', '0 kg'),
+            metricEquals('fuel-laps', '0 voltas'), metricEquals('ers-store', '—'),
+            metricEquals('ers-mguh', '—'), metricEquals('ers-mode', 'Indisponível (255)'),
+            metricEquals('tyre-age', 1), ...(format === 2026 ? [metricEquals('ers-limit', '—')] : [])].join(' && '))
+          await sendFixture(syntheticTyres(format, 7, { overallFrame: 204 }).subarray(0, 100))
+          await waitForAllPackets()
+          assert.equal(await window.webContents.executeJavaScript(metricEquals('fuel-tank', '—')), true)
           await sendFixture(syntheticSession(format))
           await waitForUi(window, metricEquals('session-context', 'Treino livre 1 · Brasil'))
           // Duplicata conflitante e contexto antigo não trocam o rótulo.
@@ -308,6 +338,7 @@ app.once('browser-window-created', (_event, window) => {
         await waitForUi(window, `${metricEquals('speed', 301)} && ${metricEquals('gear', 8)} && ${metricEquals('lap', '—')}`)
         await waitForUi(window, metricEquals('session-context', 'Aguardando contexto da sessão'))
         await waitForUi(window, `${metricEquals('tyre-age', '—')} && ${metricEquals('tyre-frontLeft', '—')}`)
+        await waitForUi(window, `${metricEquals('fuel-tank', '—')} && ${metricEquals('ers-store', '—')}`)
         await sendFixture(syntheticTyres(2026, 7, { session: 18446744073709551615n, overallFrame: 0 }))
         await sendFixture(syntheticTyres(2026, 10, { session: 18446744073709551615n, overallFrame: 0 }))
         await sendFixture(syntheticSession(2026, { session: 18446744073709551615n, overallFrame: 0, sessionType: 15, sessionLink: 31 }))
@@ -357,6 +388,8 @@ app.once('browser-window-created', (_event, window) => {
         assert.deepEqual(afterReloadReal.context, beforeReloadReal.context)
         assert.deepEqual(afterReloadReal.tyreStatus, beforeReloadReal.tyreStatus)
         assert.deepEqual(afterReloadReal.tyreWear, beforeReloadReal.tyreWear)
+        assert.deepEqual(afterReloadReal.fuel, beforeReloadReal.fuel)
+        assert.deepEqual(afterReloadReal.ers, beforeReloadReal.ers)
         assert.equal(afterReloadReal.identityRevision, beforeReloadReal.identityRevision)
         await waitForUi(window, metricEquals('session-context', 'Corrida · Brasil'))
         await waitForUi(window, `document.querySelector('[data-testid="source-status"]').textContent === 'Dados desatualizados'`)
@@ -364,12 +397,16 @@ app.once('browser-window-created', (_event, window) => {
         await waitForUi(window, `document.querySelector('[data-testid="udp-status"]').textContent.includes('Sem datagramas')`)
         await waitForUi(window, metricEquals('session-context', 'Contexto da sessão indisponível'))
         await waitForUi(window, `${metricEquals('tyre-age', '—')} && ${metricEquals('tyre-frontLeft', '—')}`)
+        await waitForUi(window, `${metricEquals('fuel-tank', '—')} && ${metricEquals('ers-store', '—')} && ${metricEquals('ers-limit', '—')}`)
+        await waitForUi(window, `${metricEquals('fuel-availability', 'Dados desatualizados')} && ${metricEquals('ers-availability', 'Dados desatualizados')}`)
         await sendFixture(syntheticTyres(2026, 7, { session: 18446744073709551615n, overallFrame: 0 }))
         await sendFixture(syntheticTyres(2026, 10, { session: 18446744073709551615n, overallFrame: 0 }))
         await waitForUi(window, metricEquals('udp-packets', sentFixtures))
         assert.equal(await window.webContents.executeJavaScript(metricEquals('tyre-age', '—')), true)
+        assert.equal(await window.webContents.executeJavaScript(metricEquals('fuel-tank', '—')), true)
         await sendFixture(syntheticTyres(2026, 7, { session: 18446744073709551615n, overallFrame: 1, actual: 255, visual: 254, age: 0 }))
         await waitForUi(window, `${metricEquals('tyre-actual', 'Desconhecido (255)')} && ${metricEquals('tyre-visual', 'Desconhecido (254)')} && ${metricEquals('tyre-age', 0)} && ${metricEquals('tyre-frontLeft', '—')}`)
+        await waitForUi(window, `${metricEquals('fuel-tank', '42,25 kg')} && ${metricEquals('ers-store', '2,5 MJ')}`)
         await sendFixture(syntheticTyres(2026, 10, { session: 18446744073709551615n, overallFrame: 1, wear: [0, 100, 1.5, 2.5] }))
         await waitForUi(window, `${metricEquals('tyre-frontLeft', '1,5%')} && ${metricEquals('tyre-rearRight', '100%')}`)
         await sendFixture(syntheticSession(2026, { session: 18446744073709551615n, overallFrame: 1, sessionType: 15, sessionLink: 31 }))
@@ -403,6 +440,8 @@ app.once('browser-window-created', (_event, window) => {
           assert.equal(current.lap, null)
           assert.equal(current.tyreStatus, null)
           assert.equal(current.tyreWear, null)
+          assert.equal(current.fuel, null)
+          assert.equal(current.ers, null)
         }
         // Rajada do UID aposentado não restaura o contexto anterior após retomada.
         for (const overallFrame of [2, 3]) await sendFixture(syntheticSession(2026, { session: 456n, overallFrame, sessionType: 1 }))
@@ -419,10 +458,12 @@ app.once('browser-window-created', (_event, window) => {
         await delay(1500)
         await sendFixture(syntheticTyres(2026, 10, { session: 789n, overallFrame: 201 }))
         await waitForUi(window, metricEquals('tyre-age', '—'))
+        await waitForUi(window, `${metricEquals('fuel-tank', '—')} && ${metricEquals('ers-store', '—')}`)
         assert.equal(await window.webContents.executeJavaScript(metricEquals('tyre-frontLeft', '33,8%')), true)
         assert.equal(await window.webContents.executeJavaScript(metricEquals('tyre-availability', 'Composto/idade: dados desatualizados · Desgaste: disponível')), true)
         await sendFixture(syntheticTyres(2026, 7, { session: 789n, overallFrame: 201 }))
         await waitForUi(window, metricEquals('tyre-age', 8))
+        await waitForUi(window, `${metricEquals('fuel-tank', '42,25 kg')} && ${metricEquals('ers-store', '2,5 MJ')}`)
       }
       const screenshot = await capturePage(window, 'tamanho inicial')
       await writeFile(join(app.getPath('userData'), `udp-${udpMode}.png`), screenshot.toPNG())
@@ -452,11 +493,24 @@ app.once('browser-window-created', (_event, window) => {
               [...panel.querySelectorAll('dd')].every(field => field.scrollWidth <= field.clientWidth);
           })()`), true)
           await writeFile(join(app.getPath('userData'), `tyres-${label}.png`), tyresScreenshot.toPNG())
+          for (const domain of ['fuel', 'ers']) {
+            await window.webContents.executeJavaScript(`document.querySelector('[data-testid="${domain}-panel"]').scrollIntoView({ block: 'center' })`)
+            const energyScreenshot = await capturePage(window, `painel ${domain} ${label}`)
+            assert.equal(await window.webContents.executeJavaScript(`(() => {
+              const panel = document.querySelector('[data-testid="${domain}-panel"]');
+              const bounds = panel.getBoundingClientRect();
+              return bounds.top >= 0 && bounds.bottom <= innerHeight &&
+                document.documentElement.scrollWidth <= innerWidth &&
+                [...panel.querySelectorAll('dt, dd')].every(field => field.scrollWidth <= field.clientWidth);
+            })()`), true)
+            await writeFile(join(app.getPath('userData'), `${domain}-${label}.png`), energyScreenshot.toPNG())
+          }
         }
       }
       await selectMode(window, 'simulated')
       await waitForUi(window, `document.querySelector('[data-testid="source-status"]').textContent === 'Fonte ativa'`)
       assert.equal(await window.webContents.executeJavaScript('document.querySelector(\'[data-testid="tyre-panel"]\') === null'), true)
+      assert.equal(await window.webContents.executeJavaScript('document.querySelector(\'[data-testid="fuel-panel"], [data-testid="ers-panel"]\') === null'), true)
       assert.equal(await window.webContents.executeJavaScript('document.querySelector(\'[data-testid="session-context"]\') === null'), true)
       assert.deepEqual(errors, [])
 

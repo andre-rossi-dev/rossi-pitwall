@@ -1,5 +1,7 @@
 import type { RealTelemetryIdentity } from '../../shared/realTelemetry'
 import type { RealTyreStatus, RealTyreWear } from '../../shared/tyres'
+import type { RealFuel } from '../../shared/fuel'
+import type { RealErs } from '../../shared/ers'
 import { HEADER_SIZE, inspectHeader } from './inspectHeader'
 
 // Layouts packed conferidos separadamente nos anexos oficiais EA.
@@ -10,9 +12,19 @@ const layouts = {
 } as const
 
 export type DecodedTyres = RealTelemetryIdentity & (
-  | { readonly kind: 'tyreStatus'; readonly data: RealTyreStatus }
+  // O grupo histórico tyreStatus representa todo o ID 7: um único timing e
+  // uma única decisão de aceitação para pneus, combustível e ERS.
+  | { readonly kind: 'tyreStatus'; readonly data: RealTyreStatus; readonly fuel: RealFuel; readonly ers: RealErs }
   | { readonly kind: 'tyreWear'; readonly data: RealTyreWear }
 )
+
+function finite(value: number): number | null {
+  return Number.isFinite(value) ? value : null
+}
+
+function nonNegative(value: number): number | null {
+  return Number.isFinite(value) && value >= 0 ? value : null
+}
 
 export function decodeTyres(datagram: Buffer): DecodedTyres | null {
   const header = inspectHeader(datagram)
@@ -38,6 +50,18 @@ export function decodeTyres(datagram: Buffer): DecodedTyres | null {
     return { ...identity, kind: 'tyreStatus', data: {
       ...timing, actualCompound: datagram.readUInt8(base + 25),
       visualCompound: datagram.readUInt8(base + 26), ageLaps: datagram.readUInt8(base + 27)
+    }, fuel: {
+      inTank: nonNegative(datagram.readFloatLE(base + 5)),
+      capacity: nonNegative(datagram.readFloatLE(base + 9)),
+      remainingLaps: finite(datagram.readFloatLE(base + 13))
+    }, ers: {
+      storeEnergyJ: nonNegative(datagram.readFloatLE(base + 37)),
+      deployMode: datagram.readUInt8(base + 41),
+      harvestedThisLapMGUKJ: nonNegative(datagram.readFloatLE(base + 42)),
+      harvestedThisLapMGUHJ: nonNegative(datagram.readFloatLE(base + 46)),
+      harvestLimitPerLapJ: header.packetFormat === 2026
+        ? nonNegative(datagram.readFloatLE(base + 50)) : null,
+      deployedThisLapJ: nonNegative(datagram.readFloatLE(base + (header.packetFormat === 2026 ? 54 : 50)))
     } }
   }
   // Ordem EA: RL, RR, FL, FR → TE, TD, FE, FD. Sem conversão de escala.
