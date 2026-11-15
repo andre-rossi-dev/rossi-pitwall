@@ -3,6 +3,7 @@ import type { TelemetrySnapshot } from '../../shared/telemetry'
 import type { RealTelemetrySnapshot } from '../../shared/realTelemetry'
 import { SESSION_TYPES, TRACKS } from '../../shared/sessionContext'
 import { UdpDiagnostics } from './UdpDiagnostics'
+import { TyrePanel } from './TyrePanel'
 
 export function App() {
   const [telemetry, setTelemetry] = useState<TelemetrySnapshot | null>(null)
@@ -30,7 +31,7 @@ export function App() {
     <main className="pitwall">
       <header className="header">
         <div>
-          <p className="eyebrow">ENGENHEIRO DE CORRIDA · V0.2C-B</p>
+          <p className="eyebrow">ENGENHEIRO DE CORRIDA · V0.3A</p>
           <h1>ROSSI <span>PITWALL</span></h1>
         </div>
         <span className="simulation-badge">{simulated ? 'SIMULAÇÃO' : 'UDP REAL'}</span>
@@ -81,6 +82,8 @@ export function App() {
           <span>{simulated ? 'Velocidade, marcha e volta fictícias' : '— indica dado ausente ou desatualizado'}</span>
         </div>
       </section>
+
+      {!simulated && <TyrePanel snapshot={real} />}
 
       <UdpDiagnostics />
 

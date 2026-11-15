@@ -1,5 +1,6 @@
 import type { Unsubscribe } from './telemetry'
 import type { SessionContext, SessionContextStatus } from './sessionContext'
+import type { RealTyreStatus, RealTyreWear } from './tyres'
 
 export type DataFreshness = 'waiting' | 'fresh' | 'stale'
 
@@ -37,6 +38,10 @@ export interface RealTelemetrySnapshot {
   readonly lap: RealLap | null
   readonly motionFreshness: DataFreshness
   readonly lapFreshness: DataFreshness
+  readonly tyreStatus: RealTyreStatus | null
+  readonly tyreWear: RealTyreWear | null
+  readonly tyreStatusFreshness: DataFreshness
+  readonly tyreWearFreshness: DataFreshness
 }
 
 export type RealTelemetryListener = (snapshot: RealTelemetrySnapshot) => void
