@@ -1,8 +1,18 @@
 # ROSSI Pitwall — V0.3C-A
 
+ROSSI Pitwall é um monitor de telemetria para Windows, desenvolvido como projeto técnico de portfólio para acompanhar dados do **EA SPORTS F1 25** em uma interface local, em português brasileiro.
+
+A versão atual recebe telemetria UDP nos formatos **2025 e 2026** e apresenta velocidade, marcha, volta, contexto de sessão e circuito, pneus, combustível, ERS, posição e diferenças de tempo (gaps) para o carro à frente e o líder. O suporte se limita aos pacotes e campos documentados abaixo. Um modo de simulação permite explorar a interface com dados explicitamente fictícios, sem abrir o jogo.
+
+Construído com **Electron, React, TypeScript e Node.js**, o projeto demonstra integração UDP, separação entre processos, comunicação tipada e testes automatizados. A operação é local e offline; a instalação das dependências pode exigir internet.
+
 **Estado do projeto: desenvolvimento ativo pausado — Technical Preview V0.3C-A.**
 
-A versão atual permanece funcional dentro do escopo documentado. A pausa é estratégica: novas funcionalidades estão suspensas, e o repositório permanece preservado. A compatibilidade com F1 27 será avaliada futuramente, sem prazo obrigatório de retomada. Consulte o [estado do projeto e roteiro de retomada](docs/project-status.md).
+A versão permanece funcional dentro do escopo documentado, **sem instalador Windows**. Novas funcionalidades estão suspensas. A compatibilidade com **F1 27 não foi verificada e não é garantida**; uma eventual retomada depende de avaliação técnica, sem prazo definido. Consulte o [estado do projeto e roteiro de retomada](docs/project-status.md).
+
+**Projeto independente:** ROSSI Pitwall não possui afiliação, patrocínio ou aprovação oficial da Electronic Arts, Codemasters ou Fórmula 1. Os nomes e marcas mencionados pertencem aos respectivos titulares. A integração utiliza as especificações públicas de telemetria UDP disponibilizadas pela EA.
+
+## Contexto de uso
 
 Fundação de um aplicativo desktop para Windows concebido como base de um futuro engenheiro de corrida local para o **EA SPORTS F1 25**, com temporada **2026** por pacote visual. O formato UDP e o pacote visual não determinam a física utilizada; addons podem alterar o comportamento energético.
 
