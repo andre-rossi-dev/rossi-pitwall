@@ -1,6 +1,10 @@
 # ROSSI Pitwall — V0.3C-A
 
-Fundação de um aplicativo desktop para Windows que futuramente atuará como engenheiro de corrida local para o **EA SPORTS F1 25**, com temporada **2026** por pacote visual. O formato UDP e o pacote visual não determinam a física utilizada; addons podem alterar o comportamento energético.
+**Estado do projeto: desenvolvimento ativo pausado — Technical Preview V0.3C-A.**
+
+A versão atual permanece funcional dentro do escopo documentado. A pausa é estratégica: novas funcionalidades estão suspensas, e o repositório permanece preservado. A compatibilidade com F1 27 será avaliada futuramente, sem prazo obrigatório de retomada. Consulte o [estado do projeto e roteiro de retomada](docs/project-status.md).
+
+Fundação de um aplicativo desktop para Windows concebido como base de um futuro engenheiro de corrida local para o **EA SPORTS F1 25**, com temporada **2026** por pacote visual. O formato UDP e o pacote visual não determinam a física utilizada; addons podem alterar o comportamento energético.
 
 **UDP REAL** decodifica velocidade, marcha e volta do jogador nos formatos 2025 e 2026. **SIMULAÇÃO** mantém o simulador local com valores explicitamente fictícios, sem abrir o jogo. O modo selecionado permanece visível; dados reais ausentes ou vencidos aparecem como **—**, sem preenchimento pelo simulador. A primeira comparação visual com o HUD do F1 25 foi relatada pelo usuário nos dois formatos; observações e limites estão em [Validação V0.2B](docs/validation-v0.2b.md).
 
@@ -18,7 +22,7 @@ Fundação de um aplicativo desktop para Windows que futuramente atuará como en
 - Contexto mínimo de Session Data (ID 1) em 2025/2026: tipo de sessão, circuito e vínculos lógicos de temporada/fim de semana/sessão, separados do UID técnico. Indicação discreta na interface, com desconhecidos explícitos e expiração independente.
 - Monitoramento dos pneus do jogador em 2025/2026: composto real, composto visual e idade (ID 7), além do percentual de desgaste por roda (ID 10). Painel **PNEUS — DADOS REAIS**, com frescor independente dos dois grupos, sem previsões ou estratégias. Validação manual dos sete cenários aprovada conforme relato do usuário; PR #7 integrado à main.
 - Combustível e ERS reais do jogador no mesmo ID 7, sem outra decodificação do payload: massa atual/capacidade, estimativa de voltas do MFD, energia armazenada, modo, recuperação MGU-K/MGU-H, utilização por volta e limite de recuperação em 2026. Dois painéis exclusivos de UDP REAL; validação manual dos sete cenários da V0.3B aprovada conforme relato do usuário; PR #8 integrado à main.
-- Painel **POSIÇÃO E DIFERENÇAS — DADOS REAIS**: posição do jogador e deltas para o carro à frente/líder fornecidos pelo ID 2 em 2025/2026. Compartilha aceitação, identidade e expiração com a volta; sem cálculo próprio de gaps. Exibição conservadora em corridas com contexto disponível e jogador ativo; validação manual dos sete cenários aprovada conforme relato do usuário, com revisão técnica independente pendente.
+- Painel **POSIÇÃO E DIFERENÇAS — DADOS REAIS**: posição do jogador e deltas para o carro à frente/líder fornecidos pelo ID 2 em 2025/2026. Compartilha aceitação, identidade e expiração com a volta; sem cálculo próprio de gaps. Exibição conservadora em corridas com contexto disponível e jogador ativo; validação manual dos sete cenários aprovada conforme relato do usuário. Revisão técnica estática independente concluída antes do merge, sem bloqueios identificados, conforme registro do [PR #9](https://github.com/andre-rossi-dev/rossi-pitwall/pull/9), integrado à main.
 - Testes automatizados com Vitest, UDP local e roteiro de integração com Electron real.
 
 ## Stack e pré-requisitos
@@ -40,6 +44,13 @@ Windows 10/11 de 64 bits, **Node.js 24 LTS (24.14.0 ou superior na linha 24)** e
 As versões diretas estão fixadas em `package.json`; `package-lock.json` registra a resolução completa. Não é necessário instalar Electron ou TypeScript globalmente.
 
 ## Instalação e execução
+
+Para obter o repositório:
+
+```powershell
+git clone https://github.com/andre-rossi-dev/rossi-pitwall.git
+cd rossi-pitwall
+```
 
 Na pasta do clone local:
 
@@ -193,7 +204,7 @@ O simulador reinicia a sequência ao chamar `start` após `stop`. Usa o identifi
 
 Os metadados simulados incluem origem, sessão, frame, tempo da sessão e versão do protocolo. `protocolVersion: null` continua correto para o simulador. A fonte real usa `RealTelemetrySnapshot`, separado do contrato de amostra completa do simulador, pois os grupos podem estar ausentes ou vencer independentemente. `sessionId` real é uma string decimal que preserva todos os bits do uint64.
 
-**Tempo, frame e volta não são contratos de ordem crescente.** A interface aceita cada amostra simulada recebida, e o receptor não descarta cabeçalhos por retrocesso de tempo/frame. Não há detecção nem reconciliação de flashbacks. O pacote visual 2026 não determina a versão UDP: a identificação usa exclusivamente `packetFormat` nos bytes recebidos.
+**Tempo, frame e volta não são contratos de ordem crescente.** A interface aceita cada amostra simulada recebida, e o receptor não descarta cabeçalhos por retrocesso de tempo/frame. A inspeção de cabeçalhos no receptor não interpreta nem reconcilia flashbacks por si só. A fonte real aplica a política defensiva baseada em `overallFrameIdentifier` por grupo e identidade, preservando retrocessos quando o contador geral avança segundo essa política. Não há reconciliação histórica completa de flashbacks. O pacote visual 2026 não determina a versão UDP: a identificação usa exclusivamente `packetFormat` nos bytes recebidos.
 
 ### Ciclo de vida do receptor
 
@@ -322,12 +333,12 @@ Em relato recebido em **15/11/2026**, o usuário aprovou os sete cenários: posi
 
 Para repetir e ampliar a validação, execute `npm run build` e `npm start`, compare os dois formatos em UDP REAL e confira rolagem em 980×660/640×500 e o simulador. O [roteiro detalhado](docs/validation-v0.3c-a.md#roteiro-de-validação-manual-com-f1-25-real) permanece disponível; o relato não confirma todos os passos nem transforma gaps em intervalos físicos contínuos.
 
-## Limitações e próximas entregas
+## Limitações e desenvolvimento pausado
 
 A V0.3C-A decodifica os três indicadores do jogador primário em IDs 2/6, posição/diferenças no ID 2, contexto mínimo do ID 1, composto/idade/desgaste de pneus nos IDs 7/10 e combustível/ERS no ID 7, versão 1, formatos 2025/2026. Não há parser completo, leaderboard, gap atrás, estratégias, previsões de consumo/degradação, inventário de pneus, temperatura/pressão, clima, bandeiras, Safety Car/VSC, rádio/voz, overlay, atalhos, ID 16, Straight Line Mode, reconciliação completa de flashbacks/pausas, gravação, replay, banco de dados ou instalador Windows. A ordenação modular por grupo pressupõe distância inferior a meia faixa uint32; empates e ambiguidades são descartados. A confirmação de identidade e a fila dos oito últimos UIDs substituídos reduzem alternâncias indevidas, sem autenticar o emissor nem garantir proteção contra todo atraso. Não há histórico persistente. Pacotes repetidos podem continuar chegando com o jogo parado e não mantêm medições frescas.
 
 O uso futuro será local, offline e com um único monitor. O aplicativo não injeta código nem manipula o processo do jogo. Não depende de ReShade, Project Halo ou outros addons visuais. Não há suporte específico a SWOFTY Progressive Career nem a temporadas históricas.
 
-A recepção com o F1 25 real foi relatada na V0.2A; a primeira comparação visual dos indicadores com o HUD foi relatada na V0.2B, nos formatos 2025 e 2026. As validações manuais da V0.2C-A, V0.2C-B, V0.3A, V0.3B e V0.3C-A também foram relatadas. Na preparação da V0.3C-A foi confirmado que o PR #8 está integrado à main em `24540cd`, sincronizada com origin/main após fetch e com árvore limpa. Após a validação manual, foram autorizados commit e publicação exclusivamente de `feat/v0.3c-race-position-gaps`. Os 464 testes aprovados e demais verificações automatizadas pertencem à execução de implementação, com conteúdo sintético. A revisão técnica independente dos arquivos publicados permanece pendente, antes de qualquer autorização de merge na main.
+A recepção com o F1 25 real foi relatada na V0.2A; a primeira comparação visual dos indicadores com o HUD foi relatada na V0.2B, nos formatos 2025 e 2026. As validações manuais da V0.2C-A, V0.2C-B, V0.3A, V0.3B e V0.3C-A também foram relatadas. A V0.3C-A foi integrada à main pelo [PR #9](https://github.com/andre-rossi-dev/rossi-pitwall/pull/9), em 16/11/2026, no commit `240911ebe42a03eacc4c136d0497fd34cc6eb03d`, após revisão técnica estática independente concluída sem bloqueios identificados. Os 464 testes aprovados e demais verificações automatizadas são resultados históricos da implementação, com conteúdo sintético; não foram repetidos na formalização da pausa. Os relatórios preservam o estado de cada etapa, inclusive pendências anteriores ao merge. O [estado do projeto](docs/project-status.md) consolida a situação atual, as limitações e o roadmap suspenso.
 
 Referências técnicas: [electron-vite](https://electron-vite.org/guide/) e [segurança do Electron](https://www.electronjs.org/docs/latest/tutorial/security).

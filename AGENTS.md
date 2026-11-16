@@ -1,5 +1,11 @@
 # ROSSI Pitwall — instruções de desenvolvimento
 
+## Estado do projeto
+
+- Desenvolvimento ativo pausado; última versão funcional: **V0.3C-A — Technical Preview**.
+- Consultar [docs/project-status.md](docs/project-status.md) antes de planejar qualquer continuidade; preservar obrigatoriamente a implementação atual e sua arquitetura.
+- Não iniciar nova versão funcional ou funcionalidade sem autorização explícita. Não implementar compatibilidade especulativa com F1 27; uma futura retomada exigirá avaliação técnica de compatibilidade.
+
 ## Produto e escopo
 
 - Aplicativo desktop Windows para engenharia de corrida em tempo real no F1 25, com foco na temporada moderna 2026.
