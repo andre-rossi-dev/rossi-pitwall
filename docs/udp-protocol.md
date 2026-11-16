@@ -1,4 +1,4 @@
-# Referência de protocolo — V0.3B
+# Referência de protocolo — V0.3C-A
 
 Cabeçalhos consultados em 13/11/2026; estruturas de telemetria, volta e Session Data, semântica temporal e apêndices consultados em 14/11/2026 nos anexos TXT/PDF. Implementação de contexto concluída em 15/11/2026. Fontes primárias da EA:
 
@@ -31,7 +31,7 @@ Nos dois formatos, a EA define `sessionUID` como identificador único de sessão
 
 Essas definições não garantem entrega/ordem UDP, autenticidade, frequência de avanço, tratamento de empates ou comportamento de overflow. A comparação modular e a confirmação de identidade abaixo são políticas locais defensivas, não garantias adicionais da EA.
 
-IDs documentados: 0–15 em 2025; 0–16 em 2026. A V0.3B decodifica campos mínimos dos IDs 1 (Session Data), 2 (Lap Data), 6 (Car Telemetry), 7 (Car Status: pneus/combustível/ERS) e 10 (Car Damage). ID 16 não é decodificado.
+IDs documentados: 0–15 em 2025; 0–16 em 2026. A V0.3C-A decodifica campos mínimos dos IDs 1 (Session Data), 2 (Lap Data: volta/posição/diferenças), 6 (Car Telemetry), 7 (Car Status: pneus/combustível/ERS) e 10 (Car Damage). ID 16 não é decodificado.
 
 ## Política de inspeção de cabeçalho (preservada da V0.2A)
 
@@ -67,6 +67,45 @@ Para o índice `i = playerCarIndex` (byte 27), base do carro = `29 + i×stride`.
 | Volta atual | 33 | uint8 | `62 + i×57` |
 
 Marcha aceita -1, 0 e 1–8. Volta zero e velocidade zero são preservadas. O parser não inventa tetos plausíveis para velocidade/volta. Não valida semanticamente os campos não utilizados; pacote aceito não é certificação de todo o payload nem autenticação da origem. Pacotes rejeitados continuam contados no diagnóstico conforme a política de cabeçalho, sem contador de erros de payload nesta versão.
+
+## Posição e diferenças — V0.3C-A
+
+Lap Data reconferido em **15/11/2026** nos dois TXT e PDFs oficiais ligados no início. Os PDFs confirmam versão **1**, tamanho e frequência escolhida no menu: página 5 de 2025 (estrutura continua na 6) e página 6 de 2026, numeração humana. Os layouts mantêm stride **57**, 22/24 carros e totais **1285/1399**, incluindo cabeçalho 29 e trailer 2. Seleção exclusivamente por `packetFormat` e `playerCarIndex`; somente o jogador primário é lido.
+
+Base `B = 29 + playerCarIndex × 57`, offsets iguais nos dois formatos:
+
+| Campo EA | Tipo / unidade | Offset no carro | Absoluto |
+| --- | --- | --- | --- |
+| m_deltaToCarInFrontMSPart | uint16 LE / parcela em ms | 14 | B + 14 |
+| m_deltaToCarInFrontMinutesPart | uint8 / minutos inteiros | 16 | B + 16 |
+| m_deltaToRaceLeaderMSPart | uint16 LE / parcela em ms | 17 | B + 17 |
+| m_deltaToRaceLeaderMinutesPart | uint8 / minutos inteiros | 19 | B + 19 |
+| m_carPosition | uint8 / posição de corrida | 32 | B + 32 |
+| m_currentLapNum | uint8 / volta, preservada | 33 | B + 33 |
+| m_resultStatus | uint8 / estado do resultado | 45 | B + 45 |
+
+Derivação: dois uint32 de tempo ocupam 8 bytes, dois setores de uint16 + uint8 ocupam 6; deltas começam em 14, ocupam 6 e são seguidos por três floats (12), até posição em 32. Após posição/volta, nove uint8 levam ao grid em 43, driverStatus em 44 e resultStatus em 45. Não se lê posição a partir do grid ou do índice.
+
+`RealLap` conserva os sete campos brutos, além do timing; `number` continua sendo a volta. A composição dimensional é **total em ms = minutos × 60.000 + parcela em ms**. A interface apenas formata as parcelas equivalentes, sem criar um gap a partir de outras medições: `1,234 s` ou `1 min 2,345 s`, sempre com três casas. Inteiros originais não são arredondados, normalizados nem substituídos por valores anteriores.
+
+### Política local de apresentação
+
+As regras abaixo são escolhas conservadoras do Pitwall, não garantias universais da EA:
+
+- O painel só existe em UDP REAL. Exige Lap Data fresco, identidade técnica e contexto ID 1 fresco/sem conflito, com tipo **15, 16 ou 17** (corridas nos apêndices PDF 2025 p. 27 / 2026 p. 29). Tipos 1–14 e 18 mostram `—`: a descrição de posição de corrida não garante posição de classificação, melhor volta ou ordem na pista em outras sessões. Tipo desconhecido/contexto ausente, vencido ou contraditório também oculta o painel numericamente; não bloqueia a volta anterior nem altera o snapshot bruto.
+- Exige `resultStatus = 2` (ativo). Os FAQs oficiais (PDF 2025 p. 20 / 2026 p. 22) recomendam conferir resultStatus para distinguir dados de veículos inválidos/inativos. Também citam participantes ativos, cujo ID 4 permanece fora do escopo. Para este painel de corrida atual adotamos regra ainda mais restrita: finalizado, abandono, desclassificação e outros estados conhecidos/desconhecidos não são mostrados como corrida ativa. Esse filtro não rejeita a volta nem o pacote inteiro.
+- Posição em **1–22 / 1–24** aparece como `P1` etc.; zero ou acima do limite estrutural oculta posição e ambos os gaps. Não se presume quantidade de participantes ativos ou classificação final. A posição não deriva de `playerCarIndex`.
+- Em **P1**, ambos os gaps são `—`, com indicação de líder/diferenças não aplicáveis, mesmo se vierem positivos. Não interpretamos um possível carro fisicamente à frente como adversário na classificação.
+- Para demais posições, cada delta é apresentado independentemente: total zero é ambíguo e vira `—`; parcela de ms **≥ 60.000** é não canônica para esta apresentação em minutos e também vira `—`. Os documentos não especificam sentinelas universais ou tratamento de overflow; esta é uma rejeição visual local, sem descartar o bruto nem o outro gap. Todo uint8 de minutos é preservado; não inventamos uma sentinela 255. Minutos positivos com parcela zero são exibidos.
+- Deltas positivos elegíveis são valores informados pelo jogo, sem garantir diferença instantânea/contínua ou equivalência ao HUD em todo instante. Pit stops, retardatários, voltas diferentes, Safety Car e transições podem mudar sua interpretação. Não identificamos esses estados nem inferimos voltas de atraso, piloto, gap atrás ou estratégia. A validação com o jogo permanece necessária.
+
+### Aceitação única do Lap Data
+
+`decodeTelemetry` amplia a leitura existente, mantendo todas as verificações de formato, versão, tamanho completo e índice antes dos acessos. `RealTelemetrySource` não precisou mudar: uma amostra substitui todo `RealLap`, congelado, com uma decisão de ordem/identidade e um instante de recepção. Volta, posição, gaps e resultStatus usam **lapFreshness**, vencem juntos em 3000 ms e são limpos juntos nas transições. Continuam cinco grupos, um socket, um timer de publicação e os mesmos canais IPC/inscrições. O painel reutiliza o estado React existente e estilos dos painéis compactos.
+
+Posição, volta e gaps podem aumentar ou diminuir livremente; somente `overallFrameIdentifier` decide ordem modular por grupo. Duplicatas, atrasos e meia faixa não renovam frescor; wraparound, flashbacks, confirmação técnica, proteção de UIDs e retomada após silêncio seguem a política abaixo. Não há novo fluxo temporal. Contexto ID 1 continua independente: sua expiração oculta a apresentação de corrida sem vencer `lap` ou esconder a volta. Não há sincronização entre IDs ou reconciliação histórica completa.
+
+Fixtures e testes foram ampliados sem importar offsets do decoder. Casos e resultados, incluindo o fluxo UDP → Main → IPC → React com conteúdo sintético, estão em [Validação V0.3C-A](validation-v0.3c-a.md).
 
 ## Session Data mínimo — V0.2C-B
 

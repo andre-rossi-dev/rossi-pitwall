@@ -40,5 +40,16 @@ export function decodeTelemetry(datagram: Buffer): DecodedTelemetry | null {
     if (gear < -1 || gear > 8) return null
     return { ...identity, kind: 'motion', data: { ...timing, speedKph: datagram.readUInt16LE(base), gear } }
   }
-  return { ...identity, kind: 'lap', data: { ...timing, number: datagram.readUInt8(base + 33) } }
+  return {
+    ...identity, kind: 'lap', data: {
+      ...timing,
+      number: datagram.readUInt8(base + 33),
+      carPosition: datagram.readUInt8(base + 32),
+      deltaToCarInFrontMSPart: datagram.readUInt16LE(base + 14),
+      deltaToCarInFrontMinutesPart: datagram.readUInt8(base + 16),
+      deltaToRaceLeaderMSPart: datagram.readUInt16LE(base + 17),
+      deltaToRaceLeaderMinutesPart: datagram.readUInt8(base + 19),
+      resultStatus: datagram.readUInt8(base + 45)
+    }
+  }
 }

@@ -32,7 +32,9 @@ function syntheticHeader() {
 // Pacotes completos SINTÉTICOS, baseados nos anexos EA. Nunca são captura real.
 function syntheticTelemetry(format, id, {
   session = 123n, speed = 287, gear = 7, lap = 12,
-  frame = 100, overallFrame = 200, time = 10.5
+  frame = 100, overallFrame = 200, time = 10.5,
+  position = 5, frontMS = 1234, frontMinutes = 0,
+  leaderMS = 2345, leaderMinutes = 1, resultStatus = 2
 } = {}) {
   const cars = format === 2025 ? 22 : 24
   const stride = id === 2 ? 57 : format === 2025 ? 60 : 59
@@ -52,11 +54,15 @@ function syntheticTelemetry(format, id, {
       packet.writeUInt16LE(car === cars - 1 ? speed : 40, base)
       packet.writeInt8(car === cars - 1 ? gear : 1, base + 15)
     } else {
-      packet[base + 32] = car + 1
+      packet.writeUInt16LE(car === cars - 1 ? frontMS : 321, base + 14)
+      packet[base + 16] = car === cars - 1 ? frontMinutes : 2
+      packet.writeUInt16LE(car === cars - 1 ? leaderMS : 654, base + 17)
+      packet[base + 19] = car === cars - 1 ? leaderMinutes : 3
+      packet[base + 32] = car === cars - 1 ? position : car + 1
       packet[base + 33] = car === cars - 1 ? lap : 2
       packet[base + 43] = car + 1
       packet[base + 44] = 4
-      packet[base + 45] = 2
+      packet[base + 45] = car === cars - 1 ? resultStatus : 1
       packet[base + 56] = 255
     }
   }
@@ -157,12 +163,76 @@ async function capturePage(window, stage) {
   }
 }
 
+async function verifyRacePosition(window) {
+  const values = (position, front, leader) => [metricEquals('race-position', position),
+    metricEquals('race-front', front), metricEquals('race-leader', leader)].join(' && ')
+  for (const format of [2025, 2026]) {
+    const session = BigInt(format)
+    // Novo UID e contexto de corrida confirmado, sem reaproveitar o treino anterior.
+    for (const overallFrame of [0, 1]) await sendFixture(syntheticSession(format, { session, overallFrame, sessionType: 15 }))
+    await waitForUi(window, metricEquals('session-context', 'Corrida · Brasil'))
+    await waitForUi(window, values('—', '—', '—'))
+    await sendFixture(syntheticTelemetry(format, 2, { session, overallFrame: 0 }))
+    await waitForUi(window, values('P5', '1,234 s', '1 min 2,345 s'))
+    for (const overallFrame of [0, 0xffffffff, 0x80000000]) {
+      await sendFixture(syntheticTelemetry(format, 2, { session, overallFrame, position: 1 }))
+    }
+    await sendFixture(syntheticTelemetry(format, 2, { session, overallFrame: 1 }).subarray(0, 100))
+    await waitForUi(window, metricEquals('udp-packets', sentFixtures))
+    assert.equal(await window.webContents.executeJavaScript(values('P5', '1,234 s', '1 min 2,345 s')), true)
+    await sendFixture(syntheticTelemetry(format, 2, { session, overallFrame: 1,
+      frame: 1, time: 0.5, lap: 2, position: 3, frontMS: 1, leaderMS: 300, leaderMinutes: 0 }))
+    await waitForUi(window, `${values('P3', '0,001 s', '0,300 s')} && ${metricEquals('lap', 2)}`)
+    await sendFixture(syntheticTelemetry(format, 2, { session, overallFrame: 2, position: 1 }))
+    await waitForUi(window, values('P1', '—', '—'))
+    await waitForUi(window, metricEquals('race-availability', 'Líder · diferenças não aplicáveis'))
+    await sendFixture(syntheticTelemetry(format, 2, { session, overallFrame: 3, position: 0 }))
+    await waitForUi(window, values('—', '—', '—'))
+    await sendFixture(syntheticTelemetry(format, 2, { session, overallFrame: 4, frontMS: 0, leaderMS: 65535 }))
+    await waitForUi(window, values('P5', '—', '—'))
+    await sendFixture(syntheticTelemetry(format, 2, { session, overallFrame: 5, resultStatus: 1 }))
+    await waitForUi(window, metricEquals('race-availability', 'Jogador sem estado ativo de corrida'))
+    await sendFixture(syntheticTelemetry(format, 2, { session, overallFrame: 6 }))
+    await waitForUi(window, values('P5', '1,234 s', '1 min 2,345 s'))
+    // Outros IDs continuam disponíveis, mas não renovam Lap Data.
+    await delay(1600)
+    await sendFixture(syntheticSession(format, { session, overallFrame: 2, sessionType: 15 }))
+    await sendFixture(syntheticTelemetry(format, 6, { session }))
+    await sendFixture(syntheticTyres(format, 7, { session }))
+    await waitForUi(window, metricEquals('race-availability', 'Dados desatualizados'))
+    await waitForUi(window, values('—', '—', '—'))
+    assert.equal(await window.webContents.executeJavaScript(`${metricEquals('lap', '—')} && ${metricEquals('speed', 287)} && ${metricEquals('fuel-tank', '42,25 kg')}`), true)
+    await sendFixture(syntheticTelemetry(format, 2, { session, overallFrame: 6 }))
+    await waitForUi(window, metricEquals('udp-packets', sentFixtures))
+    assert.equal(await window.webContents.executeJavaScript(values('—', '—', '—')), true)
+    await sendFixture(syntheticTelemetry(format, 2, { session, overallFrame: 7 }))
+    await waitForUi(window, values('P5', '1,234 s', '1 min 2,345 s'))
+  }
+  for (const [width, height, label] of [[980, 660, 'initial'], [640, 500, 'minimum']]) {
+    window.setSize(width, height)
+    await waitForUi(window, width > 720 ? 'innerWidth > 720' : 'innerWidth <= 640')
+    const overallFrame = label === 'initial' ? 300 : 301
+    await sendFixture(syntheticSession(2026, { session: 2026n, overallFrame, sessionType: 15 }))
+    await sendFixture(syntheticTelemetry(2026, 2, { session: 2026n, overallFrame, leaderMinutes: 255, leaderMS: 59999 }))
+    await waitForUi(window, values('P5', '1,234 s', '255 min 59,999 s'))
+    await window.webContents.executeJavaScript('document.querySelector(\'[data-testid="race-position-panel"]\').scrollIntoView({ block: "center" })')
+    const screenshot = await capturePage(window, `posição e diferenças ${label}`)
+    assert.equal(await window.webContents.executeJavaScript(`(() => {
+      const panel = document.querySelector('[data-testid="race-position-panel"]');
+      const bounds = panel.getBoundingClientRect();
+      return bounds.top >= 0 && bounds.bottom <= innerHeight && document.documentElement.scrollWidth <= innerWidth &&
+        [...panel.querySelectorAll('dt, dd')].every(field => field.scrollWidth <= field.clientWidth);
+    })()`), true)
+    await writeFile(join(app.getPath('userData'), `race-position-${label}.png`), screenshot.toPNG())
+  }
+}
+
 app.setPath('userData', join(__dirname, '../.smoke-profile'))
 let completed = false
 const timeout = setTimeout(() => {
-  console.error('SMOKE FALHOU: tempo limite de 40 segundos.')
+  console.error('SMOKE FALHOU: tempo limite de 60 segundos.')
   app.exit(1)
-}, 40_000)
+}, 60_000)
 
 app.on('window-all-closed', () => {
   if (!completed) {
@@ -189,6 +259,7 @@ app.once('browser-window-created', (_event, window) => {
       await waitForUi(window, metricEquals('session-context', 'Aguardando contexto da sessão'))
       await waitForUi(window, `${metricEquals('tyre-age', '—')} && ${metricEquals('tyre-frontLeft', '—')}`)
       await waitForUi(window, `${metricEquals('fuel-tank', '—')} && ${metricEquals('ers-store', '—')}`)
+      await waitForUi(window, `${metricEquals('race-position', '—')} && ${metricEquals('race-front', '—')} && ${metricEquals('race-leader', '—')}`)
       await selectMode(window, 'simulated')
       await waitForUi(window, `document.querySelector('[data-testid="source-status"]').textContent === 'Fonte ativa'`)
       assert.equal(await window.webContents.executeJavaScript('document.querySelector(\'[data-testid="session-context"]\') === null'), true)
@@ -243,6 +314,7 @@ app.once('browser-window-created', (_event, window) => {
       assert.equal(await window.webContents.executeJavaScript('document.querySelector(\'[data-testid="tyre-panel"]\') === null'), true)
       assert.equal(await window.webContents.executeJavaScript('document.querySelector(\'[data-testid="fuel-panel"], [data-testid="ers-panel"]\') === null'), true)
       assert.deepEqual(ui.apiKeys, ['onTelemetry', 'onUdpDiagnostics', 'onRealTelemetry'])
+      assert.equal(await window.webContents.executeJavaScript('document.querySelector(\'[data-testid="race-position-panel"]\') === null'), true)
 
       if (udpMode === 'receive') {
         await waitForUi(window, `document.querySelector('[data-testid="udp-status"]').textContent === 'Aguardando datagramas'`)
@@ -308,6 +380,8 @@ app.once('browser-window-created', (_event, window) => {
           assert.equal(await window.webContents.executeJavaScript(metricEquals('fuel-tank', '—')), true)
           await sendFixture(syntheticSession(format))
           await waitForUi(window, metricEquals('session-context', 'Treino livre 1 · Brasil'))
+          await waitForUi(window, metricEquals('race-availability', 'Disponível somente em corrida'))
+          assert.equal(await window.webContents.executeJavaScript(metricEquals('race-position', '—')), true)
           // Duplicata conflitante e contexto antigo não trocam o rótulo.
           await sendFixture(syntheticSession(format, { sessionType: 15 }))
           await sendFixture(syntheticSession(format, { overallFrame: 199, trackId: 0 }))
@@ -390,6 +464,7 @@ app.once('browser-window-created', (_event, window) => {
         assert.deepEqual(afterReloadReal.tyreWear, beforeReloadReal.tyreWear)
         assert.deepEqual(afterReloadReal.fuel, beforeReloadReal.fuel)
         assert.deepEqual(afterReloadReal.ers, beforeReloadReal.ers)
+        assert.deepEqual(afterReloadReal.lap, beforeReloadReal.lap)
         assert.equal(afterReloadReal.identityRevision, beforeReloadReal.identityRevision)
         await waitForUi(window, metricEquals('session-context', 'Corrida · Brasil'))
         await waitForUi(window, `document.querySelector('[data-testid="source-status"]').textContent === 'Dados desatualizados'`)
@@ -506,6 +581,7 @@ app.once('browser-window-created', (_event, window) => {
             await writeFile(join(app.getPath('userData'), `${domain}-${label}.png`), energyScreenshot.toPNG())
           }
         }
+        await verifyRacePosition(window)
       }
       await selectMode(window, 'simulated')
       await waitForUi(window, `document.querySelector('[data-testid="source-status"]').textContent === 'Fonte ativa'`)
@@ -513,6 +589,7 @@ app.once('browser-window-created', (_event, window) => {
       assert.equal(await window.webContents.executeJavaScript('document.querySelector(\'[data-testid="fuel-panel"], [data-testid="ers-panel"]\') === null'), true)
       assert.equal(await window.webContents.executeJavaScript('document.querySelector(\'[data-testid="session-context"]\') === null'), true)
       assert.deepEqual(errors, [])
+      assert.equal(await window.webContents.executeJavaScript('document.querySelector(\'[data-testid="race-position-panel"]\') === null'), true)
 
       console.log(`SMOKE OK (${udpMode}): Electron → Preload → React, modos real/simulado, diagnóstico UDP, sandbox, recarga e largura mínima verificados.`)
       if (fixtureSocket) await new Promise((resolve) => fixtureSocket.close(resolve))

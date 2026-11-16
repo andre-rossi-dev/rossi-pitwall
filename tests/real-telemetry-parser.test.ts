@@ -11,8 +11,33 @@ describe.each([2025, 2026] as const)('decodificação UDP %i com fixtures sinté
       data: { speedKph: 287, gear: 7, frameId: 100, overallFrameId: 200, sessionTimeSeconds: 10.5 }
     })
     expect(decodeTelemetry(syntheticTelemetry(2, { format, player }))).toMatchObject({
-      kind: 'lap', playerCarIndex: player, data: { number: 12 }
+      kind: 'lap', playerCarIndex: player, data: {
+        number: 12, carPosition: 5, resultStatus: 2,
+        deltaToCarInFrontMSPart: 1234, deltaToCarInFrontMinutesPart: 0,
+        deltaToRaceLeaderMSPart: 2345, deltaToRaceLeaderMinutesPart: 1
+      }
     })
+  })
+
+  it.each([1, 7, cars, 0, cars + 1, 255])('preserva posição bruta %i sem confundir grid/índice', (position) => {
+    expect(decodeTelemetry(syntheticTelemetry(2, { format, player: 0, position, lap: 0 })))
+      .toMatchObject({ data: { carPosition: position, number: 0 } })
+  })
+
+  it.each([
+    [0, 0, 0, 0], [1, 0, 999, 0], [59999, 0, 0, 1],
+    [54321, 12, 12345, 255], [60000, 1, 65535, 255]
+  ])('preserva parcelas brutas distintas: %j', (frontMS, frontMinutes, leaderMS, leaderMinutes) => {
+    expect(decodeTelemetry(syntheticTelemetry(2, { format, frontMS, frontMinutes, leaderMS, leaderMinutes })))
+      .toMatchObject({ data: {
+        deltaToCarInFrontMSPart: frontMS, deltaToCarInFrontMinutesPart: frontMinutes,
+        deltaToRaceLeaderMSPart: leaderMS, deltaToRaceLeaderMinutesPart: leaderMinutes
+      } })
+  })
+
+  it.each([0, 1, 2, 3, 4, 5, 6, 7, 255])('preserva resultStatus %i sem invalidar volta', (resultStatus) => {
+    expect(decodeTelemetry(syntheticTelemetry(2, { format, resultStatus })))
+      .toMatchObject({ data: { resultStatus, number: 12 } })
   })
 
   it.each([-1, 0, 1, 2, 3, 4, 5, 6, 7, 8])('decodifica a marcha %i com sinal', (gear) => {
