@@ -25,6 +25,13 @@ export interface RealMotion extends PacketTiming {
 
 export interface RealLap extends PacketTiming {
   readonly number: number
+  // Valores brutos do mesmo ID 2; disponibilidade semântica é de apresentação.
+  readonly carPosition: number
+  readonly deltaToCarInFrontMSPart: number
+  readonly deltaToCarInFrontMinutesPart: number
+  readonly deltaToRaceLeaderMSPart: number
+  readonly deltaToRaceLeaderMinutesPart: number
+  readonly resultStatus: number
 }
 
 export interface RealTelemetrySnapshot {
